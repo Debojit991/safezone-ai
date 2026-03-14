@@ -781,8 +781,8 @@ const OperatorConsole = () => {
              })()}
 
              {/* Confidence Bar */}
-             <div className="absolute bottom-3 left-4 right-4 flex flex-col gap-1.5 z-20">
-               <div className="flex justify-between font-mono text-[10px] tracking-widest font-bold drop-shadow-md">
+             <div className="absolute bottom-0 left-4 right-4 z-20" style={{ paddingBottom: '12px' }}>
+               <div className="flex justify-between font-mono text-[10px] tracking-widest font-bold drop-shadow-md" style={{ paddingBottom: '4px' }}>
                  <span style={{ color: isSafe ? '#1D9E75' : '#e24b4a'}}>{isSafe ? 'MONITORING \u2014 NO THREAT DETECTED' : 'INTRUSION CONFIDENCE SCORE'}</span>
                  <span style={{ color: isSafe ? '#1D9E75' : '#e24b4a'}}>{confidenceDisplay.toFixed(0)}%</span>
                </div>
@@ -793,7 +793,7 @@ const OperatorConsole = () => {
                  />
                </div>
                {analysisComplete && isSafe && (
-                  <div className="text-[#1D9E75] font-mono text-[10px] font-bold">NON-THREAT CONFIRMED \u2014 below threshold</div>
+                  <div className="text-[#1D9E75] font-mono text-[10px] font-bold mt-1">NON-THREAT CONFIRMED \u2014 below threshold</div>
                )}
              </div>
           </div>
@@ -906,8 +906,16 @@ const OperatorConsole = () => {
               initial={{ y: 200, opacity: 0 }}
               animate={{ y: 0, opacity: 1 }}
               exit={{ y: 200, opacity: 0 }}
-              className="absolute bottom-6 right-4 w-80 bg-[#1e232b] rounded-2xl shadow-[0_20px_50px_rgba(0,0,0,0.5)] border border-[#2c3440] overflow-hidden flex flex-col"
-              style={{ zIndex: 9999, pointerEvents: 'all' }}
+              className="w-80 rounded-2xl shadow-[0_20px_50px_rgba(0,0,0,0.5)] border border-[#2c3440] overflow-hidden flex flex-col"
+              style={{
+                position: 'fixed',
+                bottom: 24,
+                right: 24,
+                zIndex: 9999,
+                pointerEvents: 'all',
+                backdropFilter: 'blur(8px)',
+                backgroundColor: 'rgba(14, 20, 30, 0.95)',
+              }}
             >
               {/* Header */}
               <div className="bg-[#151920] px-3 py-2 flex items-center justify-between border-b border-[#2c3440]">
@@ -947,26 +955,31 @@ const OperatorConsole = () => {
                       </span>
                     </div>
 
-                    <p className="font-mono text-xs font-bold tracking-wider"
-                       style={{ color: countdownSeconds > 8 ? '#1D9E75' : countdownSeconds > 3 ? '#F59E0B' : '#EF4444' }}>
+                    <p className="font-mono font-bold tracking-wider"
+                       style={{
+                         fontSize: '0.75rem',
+                         color: countdownSeconds > 8 ? '#1D9E75' : countdownSeconds > 3 ? '#F59E0B' : '#EF4444',
+                       }}>
                       AUTO-DISPATCH IN {countdownSeconds}s
                     </p>
 
                     <div className="flex flex-col gap-1 w-full text-center">
-                      <h3 className="text-white font-semibold text-xs">{selectedCam.label}</h3>
-                      <p className="text-gray-500 font-mono text-[9px]">{selectedCam.zone} • {selectedCam.gps.join(', ')}</p>
+                      <h3 className="font-bold text-white" style={{ fontSize: '0.85rem' }}>{selectedCam.label}</h3>
+                      <p className="font-mono text-gray-400" style={{ fontSize: '0.7rem' }}>{selectedCam.zone} • {selectedCam.gps.join(', ')}</p>
                     </div>
 
-                    <div className="flex items-center gap-2 font-bold text-[10px] tracking-wider w-full mt-1">
+                    <div className="flex items-center gap-2 font-bold text-[11px] tracking-wider w-full mt-1">
                       <button
                         onClick={() => handleGuardResponse('ACCEPTED')}
-                        className="flex-1 bg-[#1D9E75] hover:bg-emerald-600 text-white rounded py-1.5 transition-colors cursor-pointer"
+                        className="flex-1 bg-[#1D9E75] hover:bg-[#158a63] text-white font-bold rounded transition-colors cursor-pointer"
+                        style={{ minHeight: '40px' }}
                       >
                         ACCEPT
                       </button>
                       <button
                         onClick={() => handleGuardResponse('ESCALATED')}
-                        className="flex-1 bg-[#2c3440] hover:bg-[#3d4856] text-[#ef9f27] rounded py-1.5 transition-colors cursor-pointer"
+                        className="flex-1 bg-[#1a2535] hover:bg-[#243040] text-[#ef9f27] font-bold rounded transition-colors cursor-pointer"
+                        style={{ minHeight: '40px' }}
                       >
                         ESCALATE
                       </button>
