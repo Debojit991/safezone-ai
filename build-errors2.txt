@@ -1,0 +1,4 @@
+src/pages/OperatorConsole.tsx(4,41): error TS6133: 'Cpu' is declared but its value is never read.
+src/pages/OperatorConsole.tsx(10,19): error TS1484: 'Camera' is a type and must be imported using a type-only import when 'verbatimModuleSyntax' is enabled.
+src/pages/OperatorConsole.tsx(26,10): error TS6133: 'keypointData' is declared but its value is never read.
+src/pages/OperatorConsole.tsx(379,19): error TS2304: Cannot find name 'Play'.

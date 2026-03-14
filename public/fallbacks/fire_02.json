@@ -1,0 +1,12 @@
+{
+  "clip_id": "fire",
+  "frames": [
+    {
+      "keypoints": [],
+      "confidence": 0.94,
+      "threat_type": "FIRE"
+    }
+  ],
+  "model": "yolov8n-pose",
+  "real_inference": true
+}
