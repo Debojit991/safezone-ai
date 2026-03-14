@@ -12,17 +12,16 @@ import EvacuationModal from '../components/EvacuationModal';
 
 /* ─── CAMERA → VIDEO MAPPING ─── */
 const CAMERA_VIDEOS: Record<string, string> = {
-  'CAM-01': 'fighting.mp4',
-  'CAM-02': 'fire and smoke.mp4',
-  'CAM-03': 'immediate evacuation.mp4',
-  'CAM-04': 'molestation.mp4',
-  'CAM-05': 'stampede.mp4',
-  'CAM-06': 'tresspassing.mp4',
-  'CAM-07': 'non threat hugging.mp4',
-  'CAM-08': 'non threat walking couples.mp4',
+  'CAM-04': 'fighting.mp4',
+  'CAM-11': 'molestation.mp4',
+  'CAM-23': 'immediate evacuation.mp4',
+  'CAM-07': 'fire and smoke.mp4',
+  'CAM-31': 'stampede.mp4',
+  'CAM-02': 'tresspassing.mp4',
+  'CAM-18': 'immediate evacuation.mp4',
+  'CAM-19': 'fire and smoke.mp4',
+  'CAM-09': 'non threat walking couples.mp4',
 };
-
-const SAFE_VIDEOS = ['non threat hugging.mp4', 'non threat walking couples.mp4'];
 
 const BACKEND_URL = import.meta.env.VITE_BACKEND_URL || 'http://localhost:8000';
 
@@ -39,7 +38,6 @@ const OperatorConsole = () => {
   const [guardResponded, setGuardResponded] = useState(false);
   const [alertStatus, setAlertStatus] = useState<'PENDING' | 'ACCEPTED' | 'ESCALATED' | 'AUTO_DISPATCHED'>('PENDING');
   const [countdownSeconds, setCountdownSeconds] = useState(15);
-  const countdownRef = useRef<number | null>(null);
   const [evacModalOpen, setEvacModalOpen] = useState(false);
   const [isAlertActive, setIsAlertActive] = useState(false);
 
@@ -47,16 +45,29 @@ const OperatorConsole = () => {
   const [time, setTime] = useState('');
   const [uptime, setUptime] = useState(4210000);
   const [searchQuery, setSearchQuery] = useState('');
-  const [currentConfidence, setCurrentConfidence] = useState(0);
   const [skeletonVisible, setSkeletonVisible] = useState(false);
+  const [skeletonOffsets, setSkeletonOffsets] = useState<{dx: number; dy: number}[]>(
+    Array.from({ length: 13 }, () => ({ dx: 0, dy: 0 }))
+  );
+  const [realKeypointPositions, setRealKeypointPositions] = useState<{x: number; y: number; confidence: number}[]>([]);
   const [dispatchLog, setDispatchLog] = useState<{time: string; text: string; color: string}[]>([]);
   const [backendConnected, setBackendConnected] = useState(false);
 
-  // Refs
+  // ── CONFIDENCE SYSTEM (rewritten) ──
+  const [confidenceDisplay, setConfidenceDisplay] = useState(0);
+  const [, setAlertTriggered] = useState(false);
+  const confidenceIntervalRef = useRef<ReturnType<typeof setInterval> | null>(null);
+  const targetConfRef = useRef<number>(90);
+  const loggedThreatRef = useRef(false);
+
+  // Other Refs
   const timerRef = useRef<number | null>(null);
-  const confAnimRef = useRef<number | null>(null);
+  const countdownIntervalRef = useRef<ReturnType<typeof setInterval> | null>(null);
   const logsEndRef = useRef<HTMLDivElement>(null);
   const dispatchLogRef = useRef<HTMLDivElement>(null);
+  const videoRef = useRef<HTMLVideoElement | null>(null);
+  const precomputedRef = useRef<{ frame_time: number; keypoints: { x: number; y: number; confidence: number }[] }[]>([]);
+  const skeletonSyncRef = useRef<ReturnType<typeof setInterval> | null>(null);
 
   // ── HELPERS ──
   const getMarkerColor = (tier: string) => {
@@ -81,7 +92,12 @@ const OperatorConsole = () => {
     setLogs(prev => [...prev, `[${new Date().toISOString().substring(11, 19)}] ${msg}`]);
   };
 
-  const isSafeFeed = (camId: string) => SAFE_VIDEOS.includes(CAMERA_VIDEOS[camId] ?? '');
+  const isSafeFeed = (cam: Camera) => cam.tier === 'SAFE';
+
+  const getVideoKeyfileName = (videoFilename: string): string => {
+    if (videoFilename === 'molestation.mp4') return 'fighting_keypoints.json';
+    return videoFilename.replace(/ /g, '_').replace(/\.mp4$/i, '') + '_keypoints.json';
+  };
 
   const nowTime = () => new Date().toLocaleTimeString('en-GB');
 
@@ -128,54 +144,94 @@ const OperatorConsole = () => {
     dispatchLogRef.current?.scrollIntoView({ behavior: 'smooth' });
   }, [dispatchLog]);
 
+  // ── CLEANUP: prevent memory leaks ──
+  useEffect(() => {
+    return () => {
+      if (confidenceIntervalRef.current) clearInterval(confidenceIntervalRef.current);
+      if (timerRef.current) clearInterval(timerRef.current);
+      if (countdownIntervalRef.current) clearInterval(countdownIntervalRef.current);
+      if (skeletonSyncRef.current) clearInterval(skeletonSyncRef.current);
+    };
+  }, []);
+
+  // ── SKELETON ANIMATION ──
+  useEffect(() => {
+    if (!skeletonVisible) {
+      setSkeletonOffsets(Array.from({ length: 13 }, () => ({ dx: 0, dy: 0 })));
+      return;
+    }
+    const id = setInterval(() => {
+      setSkeletonOffsets(prev => prev.map(p => {
+        let ndx = p.dx + (Math.random() * 12 - 6);
+        let ndy = p.dy + (Math.random() * 12 - 6);
+        if (ndx > 20) ndx = 20;
+        if (ndx < -20) ndx = -20;
+        if (ndy > 20) ndy = 20;
+        if (ndy < -20) ndy = -20;
+        return { dx: ndx, dy: ndy };
+      }));
+    }, 200);
+    return () => clearInterval(id);
+  }, [skeletonVisible]);
+
   // ── CAMERA CLICK HANDLER (the ONLY trigger) ──
   const handleCameraClick = (cam: Camera) => {
-    // Clean up previous timers
-    if (timerRef.current) clearInterval(timerRef.current);
-    if (confAnimRef.current) clearInterval(confAnimRef.current);
-    if (countdownRef.current) clearInterval(countdownRef.current);
-    const win = window as any;
-    if (win.currentCountdownInterval) clearInterval(win.currentCountdownInterval);
+    // 1. Clear any existing confidence interval
+    if (confidenceIntervalRef.current) {
+      clearInterval(confidenceIntervalRef.current);
+      confidenceIntervalRef.current = null;
+    }
+    // Clear other timers
+    if (timerRef.current) { clearInterval(timerRef.current); timerRef.current = null; }
+    if (countdownIntervalRef.current) { clearInterval(countdownIntervalRef.current); countdownIntervalRef.current = null; }
+    if (skeletonSyncRef.current) { clearInterval(skeletonSyncRef.current); skeletonSyncRef.current = null; }
+    precomputedRef.current = [];
 
-    // Reset all state
+    // 2. Reset state
+    setAlertTriggered(false);
     setAnalysisComplete(false);
     setGuardResponded(false);
     setAlertStatus('PENDING');
     setCountdownSeconds(15);
     setIsAlertActive(false);
-    setCurrentConfidence(0);
     setKeypointCount(0);
     setFrameCount(0);
     setMsTimer(0);
     setDispatchLog([]);
+    setSkeletonVisible(false);
+    setRealKeypointPositions([]);
+    loggedThreatRef.current = false;
 
-    // Set camera
+    // 3. Set confidenceDisplay to 45
+    setConfidenceDisplay(45);
+
+    // 4. Set the active camera
     setSelectedCam(cam);
     addLog(`CAM_SELECT: ${cam.id} [${cam.label}]`);
 
-    const safe = isSafeFeed(cam.id);
+    const safe = isSafeFeed(cam);
 
     if (safe) {
-      // ── SAFE TIER: fluctuate 38-46%, no alert ──
-      setCurrentConfidence(42);
+      // ── SAFE CAMERA: float confidence between 38-44 ──
+      setConfidenceDisplay(41);
       setKeypointCount(17);
       setFrameCount(23);
       setAnalysisComplete(true);
+      addLog(`SAFE_FEED: ${cam.id} \u2014 monitoring mode`);
 
-      confAnimRef.current = window.setInterval(() => {
-        setCurrentConfidence(prev => {
-          const walk = Math.floor(Math.random() * 7) - 3;
+      confidenceIntervalRef.current = setInterval(() => {
+        setConfidenceDisplay(prev => {
+          const walk = (Math.random() * 3) - 1.5; // -1.5 to +1.5
           let next = prev + walk;
           if (next < 38) next = 38;
-          if (next > 46) next = 46;
+          if (next > 44) next = 44;
           return next;
         });
       }, 800);
-
-      addLog(`SAFE_FEED: ${cam.id} — monitoring mode`);
     } else {
-      // ── THREAT TIER ──
-      const fallbackConf = cam.conf || (Math.floor(Math.random() * 8) + 87);
+      // ── THREAT CAMERA ──
+      const target = cam.conf || (Math.floor(Math.random() * 8) + 87);
+      targetConfRef.current = target;
 
       // Start detection timer
       const startTime = performance.now();
@@ -183,127 +239,169 @@ const OperatorConsole = () => {
         setMsTimer((performance.now() - startTime) / 1000);
       }, 10);
 
-      setCurrentConfidence(45);
       setKeypointCount(17);
       setFrameCount(23);
       setSkeletonVisible(true);
-
       addLog(`INIT_ANALYSIS: ${cam.id} [${cam.label}]`);
 
-      // Try real backend first (after 2s delay for video to load), fallback to simulation
-      const videoFilename = CAMERA_VIDEOS[cam.id] ?? 'fighting.mp4';
-      const videoUrl = `${window.location.origin}/videos/${videoFilename}`;
+      // Fetch pre-computed keypoints JSON for this video
+      const vfn = CAMERA_VIDEOS[cam.id] ?? 'fighting.mp4';
+      fetch(`/fallbacks/${getVideoKeyfileName(vfn)}`)
+        .then(res => res.ok ? res.json() : [])
+        .then(data => { precomputedRef.current = Array.isArray(data) ? data : []; })
+        .catch(() => { precomputedRef.current = []; });
 
-      setTimeout(async () => {
-        let realConf: number | null = null;
-        let realThreatType: string | null = null;
-
-        if (backendConnected) {
-          try {
-            const controller = new AbortController();
-            const timeout = setTimeout(() => controller.abort(), 3000);
-            const res = await fetch(`${BACKEND_URL}/analyze-url`, {
-              method: 'POST',
-              headers: { 'Content-Type': 'application/json' },
-              body: JSON.stringify({ video_url: videoUrl }),
-              signal: controller.signal,
-            });
-            clearTimeout(timeout);
-            if (res.ok) {
-              const data = await res.json();
-              realConf = Math.round(data.confidence_score * 100);
-              realThreatType = data.threat_type;
-              addLog(`BACKEND_RESULT: ${data.threat_type} @ ${realConf}%`);
-            }
-          } catch {
-            addLog(`BACKEND_TIMEOUT: falling back to simulation`);
-          }
-        }
-
-        const targetConf = realConf ?? fallbackConf;
-
-        // Animate confidence climb from current to target
-        let loggedThreat = false;
-        const confRef = { current: 45 };
-
-        confAnimRef.current = window.setInterval(() => {
-          const increment = 0.8 + Math.random() * 1.4;
-          confRef.current += increment;
-
-          if (confRef.current >= 85 && !loggedThreat) {
-            addLog(`THREAT_CONFIRMED: ${realThreatType ?? 'TRUE'}`);
-            loggedThreat = true;
-            pushDispatch('Threat detected', '#1D9E75');
-          }
-
-          if (confRef.current >= targetConf - 2) {
-            if (confAnimRef.current) clearInterval(confAnimRef.current);
-            confRef.current = targetConf;
-            setCurrentConfidence(targetConf);
-
-            if (timerRef.current) clearInterval(timerRef.current);
-            setAnalysisComplete(true);
-            setIsAlertActive(true);
-            addLog(`REROUTING ALERT: OPERATOR CONSOLE`);
-            pushDispatch('AI confirmed', '#1D9E75');
-            pushDispatch('Guard notified', '#1D9E75');
-
-            let currentTimeout = 15;
-            const countInt = window.setInterval(() => {
-              currentTimeout--;
-              setCountdownSeconds(currentTimeout);
-              if (currentTimeout === 10) {
-                pushDispatch('Acknowledgement pending', '#ef9f27');
-              }
-              if (currentTimeout <= 0) {
-                clearInterval(countInt);
-                setAlertStatus('AUTO_DISPATCHED');
-                addLog(`AUTO-SOS FIRED \u2014 NO OPERATOR RESPONSE`);
-                pushDispatch('Auto-dispatch fired', '#EF4444');
-                if ('Notification' in window && Notification.permission === 'granted') {
-                  new Notification('SAFEZONE AI \u2014 AUTO-DISPATCH', {
-                    body: 'No operator response. Emergency services contacted automatically.',
-                    icon: '/vite.svg'
-                  });
+      // Try real backend analysis (non-blocking)
+      if (backendConnected) {
+        const fullVideoUrl = `${window.location.origin}/videos/${CAMERA_VIDEOS[cam.id] ?? 'fighting.mp4'}`;
+        fetch(`${BACKEND_URL}/analyze-url`, {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({ video_url: fullVideoUrl }),
+          signal: AbortSignal.timeout(3000),
+        })
+          .then(res => res.ok ? res.json() : null)
+          .then(data => {
+            if (data) {
+              addLog(`BACKEND_RESULT: ${data.threat_type} @ ${Math.round(data.confidence_score * 100)}%`);
+              // Store real keypoints from first detected person
+              if (data.persons && data.persons.length > 0) {
+                const kps = data.persons[0].keypoints_normalized;
+                if (Array.isArray(kps) && kps.length === 17) {
+                  setRealKeypointPositions(kps.map((k: {x: number; y: number; confidence: number}) => ({
+                    x: k.x,
+                    y: k.y,
+                    confidence: k.confidence,
+                  })));
+                  addLog(`KEYPOINTS_LOADED: 17 real keypoints from backend`);
                 }
-                set(dbRef(rtdb, `alerts/system_auto_${Date.now()}`), {
-                  active: true,
-                  status: 'ESCALATED',
-                  timestamp: Date.now(),
-                  label: cam.label,
-                  zone: cam.zone,
-                  gps: cam.gps
-                }).catch(err => console.error("Firebase dispatch error:", err));
               }
-            }, 1000);
-            (window as any).currentCountdownInterval = countInt;
-            return;
-          }
+            }
+          })
+          .catch(() => {
+            addLog(`BACKEND_TIMEOUT: falling back to simulation`);
+          });
+      }
 
-          setCurrentConfidence(confRef.current);
+      // 5. After 500ms delay, start the 80ms confidence climb interval
+      setTimeout(() => {
+        // Start skeleton sync interval (100ms)
+        skeletonSyncRef.current = setInterval(() => {
+          if (precomputedRef.current.length === 0 || !videoRef.current) return;
+          const currentTime = videoRef.current.currentTime;
+          let closest = precomputedRef.current[0];
+          let minDiff = Math.abs(closest.frame_time - currentTime);
+          for (let i = 1; i < precomputedRef.current.length; i++) {
+            const diff = Math.abs(precomputedRef.current[i].frame_time - currentTime);
+            if (diff < minDiff) {
+              minDiff = diff;
+              closest = precomputedRef.current[i];
+            }
+          }
+          if (closest.keypoints && closest.keypoints.length === 17) {
+            setRealKeypointPositions(closest.keypoints);
+          }
+        }, 100);
+
+        confidenceIntervalRef.current = setInterval(() => {
+          setConfidenceDisplay(prev => {
+            const increment = Math.random() * 1.4 + 0.8; // 0.8 to 2.2
+            const next = prev + increment;
+
+            // Log when passing 85%
+            if (next >= 85 && !loggedThreatRef.current) {
+              loggedThreatRef.current = true;
+              addLog(`THREAT_CONFIRMED: TRUE`);
+              pushDispatch('Threat detected', '#1D9E75');
+            }
+
+            // Snap when within 2% of target
+            if (next >= targetConfRef.current - 2) {
+              // Clear this interval
+              if (confidenceIntervalRef.current) {
+                clearInterval(confidenceIntervalRef.current);
+                confidenceIntervalRef.current = null;
+              }
+
+              // Snap to exact target
+              const final = targetConfRef.current;
+
+              // Stop ms timer
+              if (timerRef.current) { clearInterval(timerRef.current); timerRef.current = null; }
+
+              // Trigger alert
+              setAlertTriggered(true);
+              setAnalysisComplete(true);
+              setIsAlertActive(true);
+              addLog(`REROUTING ALERT: OPERATOR CONSOLE`);
+              pushDispatch('AI confirmed', '#1D9E75');
+              pushDispatch('Guard notified', '#1D9E75');
+
+              // Start 15s countdown
+              let currentTimeout = 15;
+              countdownIntervalRef.current = setInterval(() => {
+                currentTimeout--;
+                setCountdownSeconds(currentTimeout);
+                if (currentTimeout === 10) {
+                  pushDispatch('Acknowledgement pending', '#ef9f27');
+                }
+                if (currentTimeout <= 0) {
+                  if (countdownIntervalRef.current) {
+                    clearInterval(countdownIntervalRef.current);
+                    countdownIntervalRef.current = null;
+                  }
+                  setAlertStatus('AUTO_DISPATCHED');
+                  addLog(`AUTO-SOS FIRED \u2014 NO OPERATOR RESPONSE`);
+                  pushDispatch('Auto-dispatch fired', '#EF4444');
+                  if ('Notification' in window && Notification.permission === 'granted') {
+                    new Notification('SAFEZONE AI \u2014 AUTO-DISPATCH', {
+                      body: 'No operator response. Emergency services contacted automatically.',
+                      icon: '/vite.svg'
+                    });
+                  }
+                  set(dbRef(rtdb, `alerts/system_auto_${Date.now()}`), {
+                    active: true,
+                    status: 'ESCALATED',
+                    timestamp: Date.now(),
+                    label: cam.label,
+                    zone: cam.zone,
+                    gps: cam.gps
+                  }).catch(err => console.error('Firebase dispatch error:', err));
+                }
+              }, 1000);
+
+              return final; // snap to exact target
+            }
+
+            return next;
+          });
         }, 80);
-      }, 2000);
+      }, 500);
     }
   };
 
   // ── RESET ──
   const handleReset = () => {
-    if (timerRef.current) clearInterval(timerRef.current);
-    if (confAnimRef.current) clearInterval(confAnimRef.current);
-    if (countdownRef.current) clearInterval(countdownRef.current);
-    const win = window as any;
-    if (win.currentCountdownInterval) clearInterval(win.currentCountdownInterval);
+    if (confidenceIntervalRef.current) { clearInterval(confidenceIntervalRef.current); confidenceIntervalRef.current = null; }
+    if (timerRef.current) { clearInterval(timerRef.current); timerRef.current = null; }
+    if (countdownIntervalRef.current) { clearInterval(countdownIntervalRef.current); countdownIntervalRef.current = null; }
 
     setAnalysisComplete(false);
     setGuardResponded(false);
     setIsAlertActive(false);
-    setCurrentConfidence(0);
+    setConfidenceDisplay(0);
+    setAlertTriggered(false);
     setKeypointCount(0);
     setFrameCount(0);
     setMsTimer(0);
     setAlertStatus('PENDING');
     setCountdownSeconds(15);
     setSkeletonVisible(false);
+    setDispatchLog([]);
+    setRealKeypointPositions([]);
+    if (skeletonSyncRef.current) { clearInterval(skeletonSyncRef.current); skeletonSyncRef.current = null; }
+    precomputedRef.current = [];
+    loggedThreatRef.current = false;
   };
 
   // ── GUARD RESPONSE ──
@@ -311,8 +409,7 @@ const OperatorConsole = () => {
     setGuardResponded(true);
     setAlertStatus(status);
 
-    const win = window as any;
-    if (win.currentCountdownInterval) clearInterval(win.currentCountdownInterval);
+    if (countdownIntervalRef.current) { clearInterval(countdownIntervalRef.current); countdownIntervalRef.current = null; }
 
     addLog(`OPERATOR OVERRIDE: ${status}`);
 
@@ -354,7 +451,7 @@ const OperatorConsole = () => {
   // ── DERIVED ──
   const videoFilename = CAMERA_VIDEOS[selectedCam.id] ?? 'fighting.mp4';
   const videoSrc = `/videos/${videoFilename}`;
-  const isSafe = isSafeFeed(selectedCam.id);
+  const isSafe = isSafeFeed(selectedCam);
 
   // ── RENDER ──
   return (
@@ -483,6 +580,7 @@ const OperatorConsole = () => {
 
              {/* Video Player — key forces remount on cam switch */}
              <video
+               ref={videoRef}
                key={selectedCam.id}
                src={videoSrc}
                className="absolute inset-0 w-full h-full object-cover z-10"
@@ -492,113 +590,97 @@ const OperatorConsole = () => {
                playsInline
              />
 
-             {/* Skeleton Overlay — always visible on top of video */}
-             {skeletonVisible && (
-               <svg
-                 className="absolute top-0 left-0 w-full h-full pointer-events-none"
-                 style={{ zIndex: 15 }}
-                 viewBox="0 0 800 450"
-                 preserveAspectRatio="xMidYMid slice"
-               >
-                 {/* Skeleton keypoints */}
-                 {[
-                   [400, 135], // 0 Head
-                   [400, 180], // 1 Neck
-                   [340, 205], // 2 L-Shoulder
-                   [460, 205], // 3 R-Shoulder
-                   [300, 270], // 4 L-Elbow
-                   [500, 270], // 5 R-Elbow
-                   [280, 340], // 6 L-Wrist
-                   [520, 340], // 7 R-Wrist
-                   [400, 270], // 8 Pelvis
-                   [360, 360], // 9 L-Knee
-                   [440, 360], // 10 R-Knee
-                   [350, 430], // 11 L-Ankle
-                   [450, 430], // 12 R-Ankle
-                 ].map(([cx, cy], i) => (
-                   <circle
-                     key={i}
-                     cx={cx} cy={cy} r="5"
-                     fill="#1D9E75"
-                     opacity="0.9"
-                   >
-                     <animate
-                       attributeName="cy"
-                       values={`${cy};${cy - 3};${cy + 3};${cy}`}
-                       dur={`${1.5 + i * 0.1}s`}
-                       repeatCount="indefinite"
-                     />
-                     <animate
-                       attributeName="r"
-                       values="5;6;4;5"
-                       dur="2s"
-                       repeatCount="indefinite"
-                     />
-                   </circle>
-                 ))}
-                 {/* Skeleton bones */}
-                 {[
-                   [0,1],[1,2],[1,3],[2,4],[3,5],[4,6],[5,7],[1,8],[8,9],[8,10],[9,11],[10,12]
-                 ].map(([s,e], i) => {
-                   const pts = [
-                     [400,135],[400,180],[340,205],[460,205],[300,270],[500,270],
-                     [280,340],[520,340],[400,270],[360,360],[440,360],[350,430],[450,430]
-                   ];
-                   return (
+             {/* Skeleton Overlay — real keypoints or animated fallback */}
+             {skeletonVisible && (() => {
+               const useReal = realKeypointPositions.length === 17;
+               const BONES = [[0,1],[1,2],[1,3],[2,4],[3,5],[4,6],[5,7],[1,8],[8,9],[8,10],[9,11],[10,12]];
+               let pts: number[][];
+
+               if (useReal) {
+                 // Map COCO-17 keypoints → SVG viewBox (800x450)
+                 // COCO order: nose, L-eye, R-eye, L-ear, R-ear, L-shoulder, R-shoulder,
+                 //   L-elbow, R-elbow, L-wrist, R-wrist, L-hip, R-hip, L-knee, R-knee, L-ankle, R-ankle
+                 // Our skeleton uses 13 points in custom order, so remap:
+                 const c = realKeypointPositions;
+                 // Derive neck as midpoint of shoulders (indices 5,6)
+                 const neckX = (c[5].x + c[6].x) / 2;
+                 const neckY = (c[5].y + c[6].y) / 2;
+                 // Derive pelvis as midpoint of hips (indices 11,12)
+                 const pelvisX = (c[11].x + c[12].x) / 2;
+                 const pelvisY = (c[11].y + c[12].y) / 2;
+                 pts = [
+                   [c[0].x * 800, c[0].y * 450],   // 0 Head (nose)
+                   [neckX * 800, neckY * 450],       // 1 Neck
+                   [c[5].x * 800, c[5].y * 450],     // 2 L-Shoulder
+                   [c[6].x * 800, c[6].y * 450],     // 3 R-Shoulder
+                   [c[7].x * 800, c[7].y * 450],     // 4 L-Elbow
+                   [c[8].x * 800, c[8].y * 450],     // 5 R-Elbow
+                   [c[9].x * 800, c[9].y * 450],     // 6 L-Wrist
+                   [c[10].x * 800, c[10].y * 450],   // 7 R-Wrist
+                   [pelvisX * 800, pelvisY * 450],    // 8 Pelvis
+                   [c[13].x * 800, c[13].y * 450],   // 9 L-Knee
+                   [c[14].x * 800, c[14].y * 450],   // 10 R-Knee
+                   [c[15].x * 800, c[15].y * 450],   // 11 L-Ankle
+                   [c[16].x * 800, c[16].y * 450],   // 12 R-Ankle
+                 ];
+               } else {
+                 // Fallback: hardcoded base + animated offsets
+                 const BASE_PTS: [number, number][] = [
+                   [400, 135], [400, 180], [340, 205], [460, 205],
+                   [300, 270], [500, 270], [280, 340], [520, 340],
+                   [400, 270], [360, 360], [440, 360], [350, 430], [450, 430],
+                 ];
+                 pts = BASE_PTS.map(([x, y], i) => [
+                   x + (skeletonOffsets[i]?.dx ?? 0),
+                   y + (skeletonOffsets[i]?.dy ?? 0),
+                 ]);
+               }
+               return (
+                 <svg
+                   className="absolute top-0 left-0 w-full h-full pointer-events-none"
+                   style={{ zIndex: 15 }}
+                   viewBox="0 0 800 450"
+                   preserveAspectRatio="xMidYMid slice"
+                 >
+                   {pts.map(([cx, cy], i) => (
+                     <circle key={i} cx={cx} cy={cy} r="5" fill="#1D9E75" opacity="0.9" />
+                   ))}
+                   {BONES.map(([s, e], i) => (
                      <line
                        key={`bone-${i}`}
                        x1={pts[s][0]} y1={pts[s][1]}
                        x2={pts[e][0]} y2={pts[e][1]}
-                       stroke="#1D9E75"
-                       strokeWidth="2"
-                       opacity="0.7"
-                     >
-                       <animate
-                         attributeName="opacity"
-                         values="0.7;1;0.5;0.7"
-                         dur={`${2 + i * 0.15}s`}
-                         repeatCount="indefinite"
-                       />
-                     </line>
-                   );
-                 })}
-                 {/* Bounding box */}
-                 <rect
-                   x="250" y="110" width="300" height="340"
-                   fill="none"
-                   stroke="#1D9E75"
-                   strokeWidth="1.5"
-                   strokeDasharray="8 4"
-                   opacity="0.5"
-                 >
-                   <animate
-                     attributeName="stroke-dashoffset"
-                     values="0;24"
-                     dur="2s"
-                     repeatCount="indefinite"
-                   />
-                 </rect>
-                 {/* Label */}
-                 <text x="255" y="105" fill="#1D9E75" fontSize="11" fontFamily="monospace" opacity="0.8">
-                   POSE_SUBJECT_01 — 17 KEYPOINTS
-                 </text>
-               </svg>
-             )}
+                       stroke="#1D9E75" strokeWidth="2" opacity="0.7"
+                     />
+                   ))}
+                   <rect
+                     x="250" y="110" width="300" height="340"
+                     fill="none" stroke="#1D9E75" strokeWidth="1.5"
+                     strokeDasharray="8 4" opacity="0.5"
+                   >
+                     <animate attributeName="stroke-dashoffset" values="0;24" dur="2s" repeatCount="indefinite" />
+                   </rect>
+                   <text x="255" y="105" fill="#1D9E75" fontSize="11" fontFamily="monospace" opacity="0.8">
+                     POSE_SUBJECT_01 — 17 KEYPOINTS
+                   </text>
+                 </svg>
+               );
+             })()}
 
              {/* Confidence Bar */}
              <div className="absolute bottom-3 left-4 right-4 flex flex-col gap-1.5 z-20">
                <div className="flex justify-between font-mono text-[10px] tracking-widest font-bold drop-shadow-md">
-                 <span style={{ color: isSafe ? '#1D9E75' : '#e24b4a'}}>{isSafe ? 'MONITORING — NO THREAT DETECTED' : 'INTRUSION CONFIDENCE SCORE'}</span>
-                 <span style={{ color: isSafe ? '#1D9E75' : '#e24b4a'}}>{currentConfidence.toFixed(0)}%</span>
+                 <span style={{ color: isSafe ? '#1D9E75' : '#e24b4a'}}>{isSafe ? 'MONITORING \u2014 NO THREAT DETECTED' : 'INTRUSION CONFIDENCE SCORE'}</span>
+                 <span style={{ color: isSafe ? '#1D9E75' : '#e24b4a'}}>{confidenceDisplay.toFixed(0)}%</span>
                </div>
                <div className="w-full h-1.5 bg-black/70 border border-white/10 rounded-full overflow-hidden">
                  <div
-                   className={`h-full ease-out ${isSafe ? 'bg-[#1D9E75]' : 'bg-[#e24b4a]'}`}
-                   style={{ width: `${currentConfidence}%`, transition: 'width 150ms ease-out' }}
+                   className={`h-full ${isSafe ? 'bg-[#1D9E75]' : 'bg-[#e24b4a]'}`}
+                   style={{ width: `${confidenceDisplay}%`, transition: 'width 150ms ease-out' }}
                  />
                </div>
                {analysisComplete && isSafe && (
-                  <div className="text-[#1D9E75] font-mono text-[10px] font-bold">NON-THREAT CONFIRMED — below threshold</div>
+                  <div className="text-[#1D9E75] font-mono text-[10px] font-bold">NON-THREAT CONFIRMED \u2014 below threshold</div>
                )}
              </div>
           </div>
@@ -611,6 +693,14 @@ const OperatorConsole = () => {
              >
                Reset
              </button>
+             {isAlertActive && alertStatus === 'PENDING' && (
+               <button
+                 onClick={() => handleGuardResponse('ACCEPTED')}
+                 className="px-5 py-2.5 rounded font-bold text-sm text-white bg-[#1D9E75] hover:bg-emerald-600 transition-colors"
+               >
+                 Dispatch Guard →
+               </button>
+             )}
           </div>
 
           {/* Timer Row — dedicated full-width */}
@@ -820,6 +910,7 @@ const OperatorConsole = () => {
               transition={{ delay: 0 }}
             >
               <GeminiAnalysis
+                key={selectedCam.id}
                 cam={selectedCam}
                 keypointCount={keypointCount}
                 frameCount={frameCount}

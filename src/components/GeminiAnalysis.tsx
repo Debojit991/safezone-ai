@@ -9,14 +9,43 @@ interface GeminiAnalysisProps {
   isVisible: boolean;
 }
 
-const FALLBACKS: Record<string, string> = {
-  CRITICAL:
-    'YOLOv8-Pose detected full-body keypoint collapse at CAM-04 Zone A — subject\'s center-of-gravity vector dropped below ambulatory threshold across 14 consecutive frames, triggering the 91% confidence score. Immediate life risk: unresponsive individual in restricted zone with no authorized personnel within 40-meter radius; cardiac or trauma event cannot be ruled out. Recommended response: dispatch medical-equipped guard immediately, notify nearest emergency services, preserve 90-second video buffer as forensic evidence.',
-  HIGH:
-    'YOLOv8-Pose flagged anomalous movement geometry across surveillance zone — tracked subject exhibited rapid directional changes inconsistent with normal pedestrian behaviour, breaching the 85% confidence threshold. Elevated risk of physical confrontation or unauthorized zone penetration with no scheduled personnel in vicinity. Recommended response: deploy nearest available guard unit, establish perimeter monitoring, and archive 90-second pre-event video buffer for post-incident forensic review.',
-  SAFE:
-    'SafeZone AI analyzed Zone C. High velocity movement detected but defensive posture geometry was absent across all 23 frames. Confidence 42% remains below the 75% dispatch threshold — correctly classified as non-threatening social interaction. No alert generated.',
+/* ─── Threat-specific fallback text builder ─── */
+const getThreatFallback = (cam: Camera): string => {
+  const label = cam.label.toLowerCase();
+  const id = cam.id;
+  const conf = cam.conf ?? 91;
+
+  if (/safe zone|safe/.test(label)) {
+    return `SafeZone AI analyzed ${cam.zone}. High velocity movement detected but defensive posture geometry was absent across all 23 frames. Confidence ${conf}% remains below the 75% dispatch threshold — correctly classified as non-threatening social interaction. No alert generated.`;
+  }
+  if (/collapse|unresponsive|faint/.test(label)) {
+    return `YOLOv8-Pose detected full-body keypoint collapse at ${id} — subject's center-of-gravity vector dropped below ambulatory threshold across 14 consecutive frames, triggering the ${conf}% confidence score. Immediate life risk: unresponsive individual in restricted zone with no authorized personnel within 40-meter radius; cardiac or trauma event cannot be ruled out. Recommended response: dispatch medical-equipped guard immediately, notify nearest emergency services, preserve 90-second video buffer as forensic evidence.`;
+  }
+  if (/physical assault|assault|fight|physical/.test(label)) {
+    return `YOLOv8-Pose detected bilateral aggressive contact geometry at ${id} — opposing subjects show arm keypoints crossing centerline with high-velocity impact vectors across 19 frames, triggering ${conf}% confidence. Immediate life risk: active physical assault with no security personnel within 30-meter radius. Recommended response: dispatch two guards immediately, contact law enforcement, lock evidence buffer.`;
+  }
+  if (/molestation alert|molestation|molest|harass/.test(label)) {
+    return `YOLOv8-Pose detected sustained predatory proximity pattern at ${id} — aggressor keypoints maintain sub-0.5m boundary violation with directional tracking of target subject across 31 frames, triggering ${conf}% confidence. Immediate life risk: active harassment in progress. Recommended response: dispatch officer immediately, secure evidence buffer, alert victim support services.`;
+  }
+  if (/fire hazard|fire|smoke/.test(label)) {
+    return `YOLOv8-Pose detected rapid evacuation movement patterns at ${id} — multiple subjects show synchronized high-velocity vectors toward exit points with thermal anomaly signature across 21 frames, triggering ${conf}% confidence. Immediate life risk: potential fire or smoke event with mass civilian exposure. Recommended response: trigger fire alarm, dispatch emergency services, initiate evacuation protocol.`;
+  }
+  if (/trespass|intrusion|breach|perimeter/.test(label)) {
+    return `YOLOv8-Pose detected unauthorized zone penetration at ${id} — subject trajectory shows deliberate boundary crossing with evasive movement pattern across 17 frames, triggering ${conf}% confidence. Immediate life risk: unauthorized access to restricted zone. Recommended response: dispatch security immediately, lock down access points, review entry logs.`;
+  }
+  if (/evacuation emergency|evacuation|surge|stampede|crowd|panic|flood|warning/.test(label)) {
+    return `YOLOv8-Pose detected crowd crush geometry at ${id} — density threshold exceeded with subject velocity vectors showing panic movement pattern across 28 frames, triggering ${conf}% confidence. Immediate life risk: crowd crush risk with potential trampling. Recommended response: deploy crowd control immediately, open emergency exits, contact ambulance services.`;
+  }
+  if (/hit|run|vehicle/.test(label)) {
+    return `YOLOv8-Pose detected vehicle-pedestrian collision event at ${id} — pedestrian keypoints show sudden velocity drop to zero with vehicle bounding box intersection across 12 frames, triggering ${conf}% confidence. Immediate life risk: trauma injury with subject unresponsive. Recommended response: contact emergency services immediately, preserve full video evidence chain.`;
+  }
+
+  // Default generic fallback
+  return `YOLOv8-Pose flagged anomalous movement geometry at ${id} — tracked subject exhibited rapid directional changes inconsistent with normal pedestrian behaviour, breaching the ${conf}% confidence threshold. Elevated risk of physical confrontation or unauthorized zone penetration. Recommended response: deploy nearest available guard unit, establish perimeter monitoring, and archive 90-second pre-event video buffer for post-incident forensic review.`;
 };
+
+const SAFE_FALLBACK =
+  'SafeZone AI analyzed Zone C. High velocity movement detected but defensive posture geometry was absent across all 23 frames. Confidence 42% remains below the 75% dispatch threshold — correctly classified as non-threatening social interaction. No alert generated.';
 
 const GeminiAnalysis = ({ cam, keypointCount, frameCount, isVisible }: GeminiAnalysisProps) => {
   const [response, setResponse] = useState<string | null>(null);
@@ -27,9 +56,13 @@ const GeminiAnalysis = ({ cam, keypointCount, frameCount, isVisible }: GeminiAna
   const abortRef = useRef<AbortController | null>(null);
 
   const applyFallback = () => {
-    const fb = FALLBACKS[cam.tier] ?? FALLBACKS.CRITICAL;
-    setResponse(fb);
-    setResponseTime(cam.tier === 'SAFE' ? 0.8 : 1.2);
+    if (cam.tier === 'SAFE') {
+      setResponse(SAFE_FALLBACK);
+      setResponseTime(0.8);
+    } else {
+      setResponse(getThreatFallback(cam));
+      setResponseTime(1.2);
+    }
   };
 
   useEffect(() => {

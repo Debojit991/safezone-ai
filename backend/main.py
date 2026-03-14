@@ -6,8 +6,7 @@ FastAPI application for real-time pose estimation and threat classification.
 import base64
 import math
 import time
-from io import BytesIO
-from typing import Optional
+from typing import List, Optional
 
 import cv2
 import numpy as np
@@ -35,9 +34,41 @@ app.add_middleware(
 # ─── Global State ───
 model: Optional[YOLO] = None
 start_time: float = 0.0
+latest_frame_result: dict = {}
 
 
-# ─── Models ───
+# ─── Response Models ───
+class KeypointNormalized(BaseModel):
+    x: float
+    y: float
+    confidence: float
+
+
+class BoundingBox(BaseModel):
+    x: float
+    y: float
+    width: float
+    height: float
+
+
+class PersonDetection(BaseModel):
+    keypoints_normalized: List[KeypointNormalized]
+    bounding_box: BoundingBox
+
+
+class AnalysisResult(BaseModel):
+    detected_persons: int
+    keypoints_raw: list
+    keypoints_normalized: List[List[KeypointNormalized]]
+    persons: List[PersonDetection]
+    frame_width: int
+    frame_height: int
+    confidence_score: float
+    threat_detected: bool
+    threat_type: str
+    processing_ms: int
+
+
 class FramePayload(BaseModel):
     frame_b64: str
 
@@ -46,13 +77,24 @@ class UrlPayload(BaseModel):
     video_url: str
 
 
-class AnalysisResult(BaseModel):
-    detected_persons: int
-    keypoints_raw: list
-    confidence_score: float
-    threat_detected: bool
-    threat_type: str
-    processing_ms: int
+class FrameRequest(BaseModel):
+    image_base64: str
+
+
+def _empty_result(threat_type: str = "NONE", processing_ms: int = 0) -> AnalysisResult:
+    """Return an empty AnalysisResult with the given threat_type."""
+    return AnalysisResult(
+        detected_persons=0,
+        keypoints_raw=[],
+        keypoints_normalized=[],
+        persons=[],
+        frame_width=0,
+        frame_height=0,
+        confidence_score=0.0,
+        threat_detected=False,
+        threat_type=threat_type,
+        processing_ms=processing_ms,
+    )
 
 
 # ─── Startup ───
@@ -74,11 +116,16 @@ def analyze_frame(frame: np.ndarray) -> AnalysisResult:
     results = model(frame, verbose=False)
     processing_ms = int((time.time() - t0) * 1000)
 
+    h, w = frame.shape[:2]
     detected_persons = 0
-    keypoints_raw = []
+    keypoints_raw: list = []
+    keypoints_normalized: List[List[KeypointNormalized]] = []
+    persons: List[PersonDetection] = []
+    bounding_boxes: list = []  # track for overlap detection
     threat_detected = False
     threat_type = "NONE"
     max_confidence = 0.0
+    cog_below_threshold = False
 
     for result in results:
         if result.keypoints is None:
@@ -88,57 +135,103 @@ def analyze_frame(frame: np.ndarray) -> AnalysisResult:
         # kps.data shape: (num_persons, 17, 3) — x, y, conf
         data = kps.data.cpu().numpy()
 
+        # Get bounding boxes if available
+        boxes_data = None
+        if result.boxes is not None:
+            boxes_data = result.boxes.xyxy.cpu().numpy()
+
         for person_idx in range(data.shape[0]):
             detected_persons += 1
             person_kps = data[person_idx]  # (17, 3)
             keypoints_raw.append(person_kps.tolist())
+
+            # Build normalized keypoints for this person
+            person_kps_norm: List[KeypointNormalized] = []
+            for kp in person_kps:
+                person_kps_norm.append(KeypointNormalized(
+                    x=round(float(kp[0]) / w, 4) if w > 0 else 0.0,
+                    y=round(float(kp[1]) / h, 4) if h > 0 else 0.0,
+                    confidence=round(float(kp[2]), 4),
+                ))
+            keypoints_normalized.append(person_kps_norm)
+
+            # Build bounding box (from YOLO boxes or from keypoint extremes)
+            if boxes_data is not None and person_idx < len(boxes_data):
+                bx1, by1, bx2, by2 = boxes_data[person_idx]
+                bbox = BoundingBox(
+                    x=round(float(bx1) / w, 4),
+                    y=round(float(by1) / h, 4),
+                    width=round(float(bx2 - bx1) / w, 4),
+                    height=round(float(by2 - by1) / h, 4),
+                )
+                bounding_boxes.append((float(bx1), float(by1), float(bx2), float(by2)))
+            else:
+                # Fallback: compute from visible keypoints
+                visible = person_kps[person_kps[:, 2] > 0.3]
+                if len(visible) > 0:
+                    x_min, y_min = visible[:, 0].min(), visible[:, 1].min()
+                    x_max, y_max = visible[:, 0].max(), visible[:, 1].max()
+                    bbox = BoundingBox(
+                        x=round(float(x_min) / w, 4),
+                        y=round(float(y_min) / h, 4),
+                        width=round(float(x_max - x_min) / w, 4),
+                        height=round(float(y_max - y_min) / h, 4),
+                    )
+                    bounding_boxes.append((float(x_min), float(y_min), float(x_max), float(y_max)))
+                else:
+                    bbox = BoundingBox(x=0, y=0, width=0, height=0)
+
+            persons.append(PersonDetection(
+                keypoints_normalized=person_kps_norm,
+                bounding_box=bbox,
+            ))
 
             # Average keypoint confidence
             confs = person_kps[:, 2]
             avg_conf = float(np.mean(confs))
             max_confidence = max(max_confidence, avg_conf)
 
-            # ── Collapse Detection ──
-            # If any keypoint confidence is below 0.3
-            low_conf_keypoints = np.sum(confs < 0.3)
+            # ── Collapse Detection: low confidence keypoints ──
+            low_conf_keypoints = int(np.sum(confs < 0.3))
             if low_conf_keypoints > 5:
                 threat_detected = True
-                threat_type = "PERSON_COLLAPSE"
+                if threat_type == "NONE":
+                    threat_type = "PERSON_COLLAPSE"
 
-            # ── Posture Analysis ──
-            # Keypoint indices (COCO): 5=L-shoulder, 6=R-shoulder, 11=L-hip, 12=R-hip
-            l_shoulder = person_kps[5]
-            r_shoulder = person_kps[6]
+            # ── Center of Gravity Detection ──
+            # Keypoint indices (COCO): 11=L-hip, 12=R-hip
             l_hip = person_kps[11]
             r_hip = person_kps[12]
+            if l_hip[2] > 0.3 and r_hip[2] > 0.3:
+                cog_y_pixel = (l_hip[1] + r_hip[1]) / 2
+                cog_y_norm = cog_y_pixel / h if h > 0 else 0
+                if cog_y_norm > 0.7:
+                    cog_below_threshold = True
 
-            # Check if keypoints are detected with sufficient confidence
+            # ── Posture Analysis ──
+            l_shoulder = person_kps[5]
+            r_shoulder = person_kps[6]
+
             if all(kp[2] > 0.3 for kp in [l_shoulder, r_shoulder, l_hip, r_hip]):
-                # Center of gravity = midpoint between hips
                 cog_x = (l_hip[0] + r_hip[0]) / 2
-                cog_y = (l_hip[1] + r_hip[1]) / 2
-
-                # Shoulder midpoint
+                cog_y_p = (l_hip[1] + r_hip[1]) / 2
                 shoulder_mid_x = (l_shoulder[0] + r_shoulder[0]) / 2
                 shoulder_mid_y = (l_shoulder[1] + r_shoulder[1]) / 2
 
-                # Posture angle (angle from vertical)
                 dx = shoulder_mid_x - cog_x
-                dy = shoulder_mid_y - cog_y
+                dy = shoulder_mid_y - cog_y_p
                 posture_angle = abs(math.degrees(math.atan2(dx, -dy)))
 
-                # If person is leaning more than 45 degrees = potential collapse
                 if posture_angle > 45:
                     threat_detected = True
                     if threat_type == "NONE":
                         threat_type = "ABNORMAL_POSTURE"
 
             # ── Aggressive Movement Detection ──
-            # Check for raised arms: wrists above shoulders
             l_wrist = person_kps[9]
             r_wrist = person_kps[10]
             if l_wrist[2] > 0.3 and l_shoulder[2] > 0.3:
-                if l_wrist[1] < l_shoulder[1] - 30:  # wrist significantly above shoulder
+                if l_wrist[1] < l_shoulder[1] - 30:
                     threat_detected = True
                     if threat_type == "NONE":
                         threat_type = "AGGRESSIVE_POSTURE"
@@ -148,9 +241,51 @@ def analyze_frame(frame: np.ndarray) -> AnalysisResult:
                     if threat_type == "NONE":
                         threat_type = "AGGRESSIVE_POSTURE"
 
+    # ── High-level threat classification (overrides) ──
+    if cog_below_threshold and threat_type in ("NONE", "ABNORMAL_POSTURE"):
+        threat_detected = True
+        threat_type = "PERSON_COLLAPSE"
+
+    if detected_persons > 3:
+        threat_detected = True
+        threat_type = "CROWD_CRUSH"
+    elif detected_persons >= 2:
+        # Check for overlapping bounding boxes → FIGHTING
+        for i in range(len(bounding_boxes)):
+            for j in range(i + 1, len(bounding_boxes)):
+                ax1, ay1, ax2, ay2 = bounding_boxes[i]
+                bx1, by1, bx2, by2 = bounding_boxes[j]
+                # Compute IoU overlap
+                ix1 = max(ax1, bx1)
+                iy1 = max(ay1, by1)
+                ix2 = min(ax2, bx2)
+                iy2 = min(ay2, by2)
+                if ix1 < ix2 and iy1 < iy2:
+                    intersection = (ix2 - ix1) * (iy2 - iy1)
+                    area_a = (ax2 - ax1) * (ay2 - ay1)
+                    area_b = (bx2 - bx1) * (by2 - by1)
+                    min_area = min(area_a, area_b)
+                    if min_area > 0 and intersection / min_area > 0.15:
+                        threat_detected = True
+                        threat_type = "FIGHTING"
+                        break
+            if threat_type == "FIGHTING":
+                break
+    elif detected_persons == 1 and max_confidence > 0.5 and threat_type == "NONE":
+        threat_detected = True
+        threat_type = "INTRUSION"
+
+    # Final fallback
+    if threat_detected and threat_type == "NONE":
+        threat_type = "GENERAL_THREAT"
+
     return AnalysisResult(
         detected_persons=detected_persons,
         keypoints_raw=keypoints_raw,
+        keypoints_normalized=keypoints_normalized,
+        persons=persons,
+        frame_width=w,
+        frame_height=h,
         confidence_score=round(max_confidence, 4),
         threat_detected=threat_detected,
         threat_type=threat_type,
@@ -195,14 +330,7 @@ async def analyze(
         raw = base64.b64decode(payload.frame_b64)
         frame = decode_frame_from_bytes(raw)
     else:
-        return AnalysisResult(
-            detected_persons=0,
-            keypoints_raw=[],
-            confidence_score=0.0,
-            threat_detected=False,
-            threat_type="NO_INPUT",
-            processing_ms=0,
-        )
+        return _empty_result("NO_INPUT")
 
     return analyze_frame(frame)
 
@@ -214,29 +342,44 @@ async def analyze_url(payload: UrlPayload):
     """
     cap = cv2.VideoCapture(payload.video_url)
     if not cap.isOpened():
-        return AnalysisResult(
-            detected_persons=0,
-            keypoints_raw=[],
-            confidence_score=0.0,
-            threat_detected=False,
-            threat_type="VIDEO_OPEN_FAILED",
-            processing_ms=0,
-        )
+        return _empty_result("VIDEO_OPEN_FAILED")
 
     ret, frame = cap.read()
     cap.release()
 
     if not ret or frame is None:
-        return AnalysisResult(
-            detected_persons=0,
-            keypoints_raw=[],
-            confidence_score=0.0,
-            threat_detected=False,
-            threat_type="FRAME_READ_FAILED",
-            processing_ms=0,
-        )
+        return _empty_result("FRAME_READ_FAILED")
 
     return analyze_frame(frame)
+
+
+@app.post("/analyze-frame", response_model=AnalysisResult)
+async def analyze_frame_endpoint(payload: FrameRequest):
+    """
+    Analyze a single base64-encoded image frame.
+    """
+    global latest_frame_result
+
+    raw = base64.b64decode(payload.image_base64)
+    arr = np.frombuffer(raw, dtype=np.uint8)
+    frame = cv2.imdecode(arr, cv2.IMREAD_COLOR)
+
+    if frame is None:
+        return _empty_result("UNKNOWN")
+
+    result = analyze_frame(frame)
+    latest_frame_result = result.dict()
+    return result
+
+
+@app.get("/live-keypoints")
+async def live_keypoints():
+    """
+    Return the most recent frame analysis result.
+    """
+    if latest_frame_result:
+        return latest_frame_result
+    return {"message": "no frames analyzed yet"}
 
 
 if __name__ == "__main__":
