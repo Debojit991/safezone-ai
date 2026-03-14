@@ -160,6 +160,19 @@ const OperatorConsole = () => {
     };
   }, []);
 
+  // FIX 2: Stale frame detection — if liveFrameSrc hasn't updated in 3s, clear it
+  const liveFrameTimestampRef = useRef<number>(0);
+  useEffect(() => {
+    if (!liveFrameSrc) return;
+    liveFrameTimestampRef.current = Date.now();
+    const check = setTimeout(() => {
+      if (Date.now() - liveFrameTimestampRef.current >= 3000) {
+        setLiveFrameSrc('');
+      }
+    }, 3100);
+    return () => clearTimeout(check);
+  }, [liveFrameSrc]);
+
   // ── SKELETON ANIMATION ──
   useEffect(() => {
     if (!skeletonVisible) {
@@ -193,6 +206,7 @@ const OperatorConsole = () => {
     if (skeletonSyncRef.current) { clearInterval(skeletonSyncRef.current); skeletonSyncRef.current = null; }
     if (livePollingRef.current) { clearInterval(livePollingRef.current); livePollingRef.current = null; }
     precomputedRef.current = [];
+    setLiveFrameSrc('');
 
     // ── CAM-LIVE SPECIAL BRANCH ──
     if (cam.id === 'CAM-LIVE') {
@@ -686,7 +700,7 @@ const OperatorConsole = () => {
                  ) : (
                    <div className="text-center">
                      <div className="w-3 h-3 rounded-full bg-[#1D9E75] animate-pulse mx-auto mb-2" />
-                     <span className="font-mono text-[10px] tracking-widest text-[#1D9E75]">WAITING FOR LIVE FEED…</span>
+                     <span className="font-mono text-[10px] tracking-widest text-[#1D9E75]">FEED INTERRUPTED — RECONNECTING…</span>
                    </div>
                  )}
                </div>
@@ -906,16 +920,7 @@ const OperatorConsole = () => {
               initial={{ y: 200, opacity: 0 }}
               animate={{ y: 0, opacity: 1 }}
               exit={{ y: 200, opacity: 0 }}
-              className="w-80 rounded-2xl shadow-[0_20px_50px_rgba(0,0,0,0.5)] border border-[#2c3440] overflow-hidden flex flex-col"
-              style={{
-                position: 'fixed',
-                bottom: 24,
-                right: 24,
-                zIndex: 9999,
-                pointerEvents: 'all',
-                backdropFilter: 'blur(8px)',
-                backgroundColor: 'rgba(14, 20, 30, 0.95)',
-              }}
+              className="w-full rounded-2xl shadow-[0_20px_50px_rgba(0,0,0,0.5)] border border-[#2c3440] overflow-hidden flex flex-col bg-[#0e141e] mt-auto"
             >
               {/* Header */}
               <div className="bg-[#151920] px-3 py-2 flex items-center justify-between border-b border-[#2c3440]">

@@ -181,23 +181,57 @@ const GuardPWA = () => {
         {!alert ? (
           /* Waiting State */
           <div className="flex flex-col items-center gap-6 text-center">
-            <div className="w-20 h-20 rounded-full border-2 border-[#1D9E75]/30 flex items-center justify-center animate-pulse">
-              <Shield className="w-10 h-10 text-[#1D9E75]" />
+            <div className="w-24 h-24 rounded-full border-2 border-[#1D9E75]/30 flex items-center justify-center">
+              <Shield className="w-12 h-12 text-[#1D9E75]" />
             </div>
             <div>
-              <h2 className="text-xl font-bold text-white mb-2">Standing By</h2>
-              <p className="text-gray-500 text-sm font-mono">Monitoring for incoming alerts…</p>
+              <h2 className="text-xl font-bold text-white mb-2 tracking-wider">GUARD 3 — ON DUTY</h2>
+              <p className="text-gray-500 text-sm font-mono max-w-xs">
+                Monitoring for alerts from SafeZone AI operator console
+              </p>
             </div>
-            <div className="mt-8 grid grid-cols-2 gap-4 text-center font-mono text-xs">
-              <div className="bg-[#0f1520] border border-[#1a2535] rounded-lg p-4">
-                <p className="text-[#1D9E75] text-lg font-bold">0</p>
-                <p className="text-gray-500">ALERTS TODAY</p>
-              </div>
-              <div className="bg-[#0f1520] border border-[#1a2535] rounded-lg p-4">
-                <p className="text-white text-lg font-bold">{currentTime}</p>
-                <p className="text-gray-500">CURRENT TIME</p>
-              </div>
+
+            {/* Live Clock */}
+            <div className="bg-[#0f1520] border border-[#1a2535] rounded-lg px-8 py-4">
+              <p className="text-white text-2xl font-bold font-mono tracking-wider">{currentTime}</p>
+              <p className="text-gray-500 font-mono text-[10px] tracking-widest mt-1">LIVE CLOCK</p>
             </div>
+
+            {/* Firebase connection status */}
+            <div className="flex items-center gap-2 mt-2">
+              <div className="w-2 h-2 rounded-full bg-[#1D9E75] animate-pulse shadow-[0_0_6px_#1D9E75]" />
+              <span className="font-mono text-[10px] tracking-widest text-[#1D9E75] font-bold">CONNECTED TO FIREBASE</span>
+            </div>
+
+            {/* DEV TEST BUTTON — development only */}
+            {import.meta.env.DEV && (
+              <button
+                onClick={() => {
+                  const mockAlert: AlertData = {
+                    active: true,
+                    label: 'TEST — Physical Assault',
+                    timestamp: Date.now(),
+                    zone: 'Zone A',
+                    gps: [22.56, 88.36],
+                    status: 'PENDING',
+                  };
+                  setAlert(mockAlert);
+                  setStatus('ON_DUTY');
+                  alertTimeRef.current = mockAlert.timestamp;
+                  if ('vibrate' in navigator) navigator.vibrate([200, 100, 200, 100, 400]);
+                  playAlertAudio();
+                  if ('Notification' in window && Notification.permission === 'granted') {
+                    new Notification('⚠️ TEST ALERT', {
+                      body: 'Test incident triggered manually.',
+                      icon: '/vite.svg',
+                    });
+                  }
+                }}
+                className="mt-4 px-4 py-2 bg-[#e24b4a]/20 hover:bg-[#e24b4a]/40 border border-[#e24b4a]/40 text-[#e24b4a] text-[10px] tracking-widest font-bold rounded transition-colors font-mono"
+              >
+                ⚠ TEST ALERT
+              </button>
+            )}
           </div>
         ) : status === 'ON_DUTY' ? (
           /* Alert State — fullscreen red card */

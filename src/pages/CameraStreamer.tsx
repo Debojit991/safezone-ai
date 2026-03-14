@@ -12,6 +12,7 @@ const CameraStreamer = () => {
   const [streamError, setStreamError] = useState('');
   const [currentTime, setCurrentTime] = useState('');
   const [uptime, setUptime] = useState(0);
+  const [facingMode, setFacingMode] = useState<'user' | 'environment'>('user');
 
   // Refs
   const videoRef = useRef<HTMLVideoElement | null>(null);
@@ -36,11 +37,22 @@ const CameraStreamer = () => {
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, []);
 
+  // Restart camera when facingMode changes (only if already streaming)
+  useEffect(() => {
+    if (isStreaming) {
+      stopCamera();
+      // Small delay to let tracks fully release before re-acquiring
+      const t = setTimeout(() => startCamera(), 300);
+      return () => clearTimeout(t);
+    }
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [facingMode]);
+
   const startCamera = async () => {
     setStreamError('');
     try {
       const stream = await navigator.mediaDevices.getUserMedia({
-        video: { width: { ideal: 1280 }, height: { ideal: 720 }, facingMode: 'user' },
+        video: { width: { ideal: 1280 }, height: { ideal: 720 }, facingMode },
         audio: false,
       });
 
@@ -130,9 +142,21 @@ const CameraStreamer = () => {
           </span>
         </div>
 
-        <div className="flex items-center gap-6">
+        <div className="flex items-center gap-4">
+          {/* FLIP camera button — mobile only */}
+          <button
+            onClick={() => setFacingMode(f => f === 'user' ? 'environment' : 'user')}
+            className="lg:hidden flex items-center gap-1.5 px-2.5 py-1.5 bg-white/10 hover:bg-white/20 border border-white/10 rounded text-[10px] tracking-wider text-white/80 transition-colors"
+          >
+            <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2">
+              <path d="M23 4v6h-6M1 20v-6h6" />
+              <path d="M3.51 9a9 9 0 0 1 14.85-3.36L23 10M1 14l4.64 4.36A9 9 0 0 0 20.49 15" />
+            </svg>
+            FLIP
+          </button>
+
           <span className="text-[#1D9E75] text-xs tracking-wider">{currentTime}</span>
-          <span className="text-white/50 text-[10px] tracking-wider">UP {formatUptime(uptime)}</span>
+          <span className="text-white/50 text-[10px] tracking-wider hidden sm:inline">UP {formatUptime(uptime)}</span>
           <span className="text-white/70 text-[10px] tracking-wider bg-white/5 border border-white/10 px-2 py-0.5 rounded">
             CAM-LIVE-01
           </span>
@@ -175,22 +199,26 @@ const CameraStreamer = () => {
               <span className="text-[10px] tracking-wider text-white/60">
                 ENCODER: JPEG Q50 | TRANSPORT: HTTPS
               </span>
+              <span className="text-[10px] tracking-wider text-white/60">
+                CAMERA: {facingMode === 'user' ? 'FRONT' : 'REAR'}
+              </span>
             </div>
           </>
         )}
 
         {/* Offline Card */}
         {!isStreaming && (
-          <div className="flex flex-col items-center gap-6 bg-[#0a0e1a] border border-[#1a2535] rounded-xl p-10 z-10">
+          <div className="flex flex-col items-center gap-6 bg-[#0a0e1a] border border-[#1a2535] rounded-xl p-10 z-10 max-w-md mx-auto">
             <div className="w-20 h-20 rounded-full border-2 border-[#1D9E75]/30 flex items-center justify-center">
               <svg width="36" height="36" viewBox="0 0 24 24" fill="none" stroke="#1D9E75" strokeWidth="1.5">
-                <path d="M23 19a2 2 0 0 1-2 2H3a2 2 0 0 1-2-2V8a2 2 0 0 1 2-2h4l2-3h6l2 3h4a2 2 0 0 1 2 2z" />
-                <circle cx="12" cy="13" r="4" />
+                <path d="M12 22s8-4 8-10V5l-8-3-8 3v7c0 6 8 10 8 10z" />
               </svg>
             </div>
             <div className="text-center">
-              <p className="text-[#1D9E75] text-sm font-bold tracking-wider mb-1">CAMERA NODE OFFLINE</p>
-              <p className="text-white/40 text-xs tracking-wider">Grant camera access to begin live streaming</p>
+              <p className="text-[#1D9E75] text-sm font-bold tracking-[0.2em] mb-2 font-mono">CAMERA NODE READY</p>
+              <p className="text-white/40 text-xs leading-relaxed max-w-xs">
+                This device will act as a live CCTV feed for the SafeZone AI operator console
+              </p>
             </div>
             <button
               onClick={startCamera}
@@ -198,6 +226,9 @@ const CameraStreamer = () => {
             >
               ▶ START CAMERA
             </button>
+            <p className="font-mono text-[10px] text-white/30 tracking-wider text-center">
+              STREAMING TO → <span className="text-white/50">{BACKEND_URL}</span>
+            </p>
           </div>
         )}
 
