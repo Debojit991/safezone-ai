@@ -11,6 +11,7 @@ export interface Camera {
 }
 
 export const CAMERAS: Camera[] = [
+  { id: 'CAM-LIVE', label: 'Live Camera Feed',    zone: 'Zone LIVE', gps: [22.5726, 88.3639], tier: 'CRITICAL', clip: 'live',     conf: 0,  time: 0 },
   { id: 'CAM-04', label: 'Physical Assault',     zone: 'Zone A', gps: [22.56,  88.36],  tier: 'CRITICAL', clip: 'fight',     conf: 91, time: 2.8 },
   { id: 'CAM-11', label: 'Molestation Alert',    zone: 'Zone B', gps: [22.565, 88.37],  tier: 'CRITICAL', clip: 'molest',    conf: 87, time: 3.1 },
   { id: 'CAM-23', label: 'Crowd Surge',          zone: 'Zone C', gps: [22.55,  88.38],  tier: 'HIGH',     clip: 'surge',     conf: 89, time: 4.2 },

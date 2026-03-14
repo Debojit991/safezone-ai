@@ -12,6 +12,7 @@ import EvacuationModal from '../components/EvacuationModal';
 
 /* ─── CAMERA → VIDEO MAPPING ─── */
 const CAMERA_VIDEOS: Record<string, string> = {
+  'CAM-LIVE': '',
   'CAM-04': 'fighting.mp4',
   'CAM-11': 'molestation.mp4',
   'CAM-23': 'immediate evacuation.mp4',
@@ -68,6 +69,10 @@ const OperatorConsole = () => {
   const videoRef = useRef<HTMLVideoElement | null>(null);
   const precomputedRef = useRef<{ frame_time: number; keypoints: { x: number; y: number; confidence: number }[] }[]>([]);
   const skeletonSyncRef = useRef<ReturnType<typeof setInterval> | null>(null);
+  const livePollingRef = useRef<ReturnType<typeof setInterval> | null>(null);
+
+  // Live camera state
+  const [liveFrameSrc, setLiveFrameSrc] = useState('');
 
   // ── HELPERS ──
   const getMarkerColor = (tier: string) => {
@@ -151,6 +156,7 @@ const OperatorConsole = () => {
       if (timerRef.current) clearInterval(timerRef.current);
       if (countdownIntervalRef.current) clearInterval(countdownIntervalRef.current);
       if (skeletonSyncRef.current) clearInterval(skeletonSyncRef.current);
+      if (livePollingRef.current) clearInterval(livePollingRef.current);
     };
   }, []);
 
@@ -185,7 +191,94 @@ const OperatorConsole = () => {
     if (timerRef.current) { clearInterval(timerRef.current); timerRef.current = null; }
     if (countdownIntervalRef.current) { clearInterval(countdownIntervalRef.current); countdownIntervalRef.current = null; }
     if (skeletonSyncRef.current) { clearInterval(skeletonSyncRef.current); skeletonSyncRef.current = null; }
+    if (livePollingRef.current) { clearInterval(livePollingRef.current); livePollingRef.current = null; }
     precomputedRef.current = [];
+
+    // ── CAM-LIVE SPECIAL BRANCH ──
+    if (cam.id === 'CAM-LIVE') {
+      setAlertTriggered(false);
+      setAnalysisComplete(false);
+      setGuardResponded(false);
+      setAlertStatus('PENDING');
+      setCountdownSeconds(15);
+      setIsAlertActive(false);
+      setKeypointCount(0);
+      setFrameCount(0);
+      setMsTimer(0);
+      setDispatchLog([]);
+      setSkeletonVisible(true);
+      setRealKeypointPositions([]);
+      setLiveFrameSrc('');
+      loggedThreatRef.current = false;
+      setConfidenceDisplay(0);
+      setSelectedCam(cam);
+      addLog(`CAM_SELECT: ${cam.id} [${cam.label}]`);
+
+      // Start detection timer
+      const startTime = performance.now();
+      timerRef.current = window.setInterval(() => {
+        setMsTimer((performance.now() - startTime) / 1000);
+      }, 10);
+
+      // Start live polling interval
+      livePollingRef.current = setInterval(async () => {
+        try {
+          const res = await fetch(`${BACKEND_URL}/live-keypoints`, {
+            signal: AbortSignal.timeout(2000),
+          });
+          if (!res.ok) return;
+          const data = await res.json();
+
+          // Update live frame image
+          if (data.frame_base64) {
+            setLiveFrameSrc(`data:image/jpeg;base64,${data.frame_base64}`);
+          }
+
+          // Update keypoints
+          if (data.persons && data.persons.length > 0) {
+            const kps = data.persons[0].keypoints_normalized;
+            if (Array.isArray(kps) && kps.length === 17) {
+              setRealKeypointPositions(kps);
+            }
+          }
+
+          // Update confidence
+          if (typeof data.confidence_score === 'number') {
+            setConfidenceDisplay(data.confidence_score * 100);
+          }
+
+          // Update keypoint/frame counts
+          if (data.detected_persons) {
+            setKeypointCount(17);
+            setFrameCount(prev => prev + 1);
+          }
+
+          // Trigger alert on threat
+          if (data.threat_detected && !loggedThreatRef.current) {
+            loggedThreatRef.current = true;
+            setIsAlertActive(true);
+            setAnalysisComplete(true);
+            addLog(`LIVE_THREAT: ${data.threat_type} @ ${Math.round(data.confidence_score * 100)}%`);
+            pushDispatch('Live threat detected', '#e24b4a');
+
+            // Start 15-second countdown
+            countdownIntervalRef.current = setInterval(() => {
+              setCountdownSeconds(prev => {
+                if (prev <= 1) {
+                  if (countdownIntervalRef.current) clearInterval(countdownIntervalRef.current);
+                  return 0;
+                }
+                return prev - 1;
+              });
+            }, 1000);
+          }
+        } catch {
+          // Silently ignore network errors
+        }
+      }, 300);
+
+      return; // Skip normal camera logic
+    }
 
     // 2. Reset state
     setAlertTriggered(false);
@@ -385,6 +478,7 @@ const OperatorConsole = () => {
     if (confidenceIntervalRef.current) { clearInterval(confidenceIntervalRef.current); confidenceIntervalRef.current = null; }
     if (timerRef.current) { clearInterval(timerRef.current); timerRef.current = null; }
     if (countdownIntervalRef.current) { clearInterval(countdownIntervalRef.current); countdownIntervalRef.current = null; }
+    if (livePollingRef.current) { clearInterval(livePollingRef.current); livePollingRef.current = null; }
 
     setAnalysisComplete(false);
     setGuardResponded(false);
@@ -399,6 +493,7 @@ const OperatorConsole = () => {
     setSkeletonVisible(false);
     setDispatchLog([]);
     setRealKeypointPositions([]);
+    setLiveFrameSrc('');
     if (skeletonSyncRef.current) { clearInterval(skeletonSyncRef.current); skeletonSyncRef.current = null; }
     precomputedRef.current = [];
     loggedThreatRef.current = false;
@@ -578,17 +673,35 @@ const OperatorConsole = () => {
                <span className="font-mono text-white/80 text-[10px] tracking-wider">{selectedCam.id}_{selectedCam.zone.replace(' ', '_').toUpperCase()}</span>
              </div>
 
-             {/* Video Player — key forces remount on cam switch */}
-             <video
-               ref={videoRef}
-               key={selectedCam.id}
-               src={videoSrc}
-               className="absolute inset-0 w-full h-full object-cover z-10"
-               autoPlay
-               loop
-               muted
-               playsInline
-             />
+             {/* Video Player / Live Frame — key forces remount on cam switch */}
+             {selectedCam.id === 'CAM-LIVE' ? (
+               <div className="absolute inset-0 w-full h-full z-10 bg-black flex items-center justify-center">
+                 {liveFrameSrc ? (
+                   <img
+                     key="live-frame"
+                     src={liveFrameSrc}
+                     alt="Live camera feed"
+                     className="w-full h-full object-cover"
+                   />
+                 ) : (
+                   <div className="text-center">
+                     <div className="w-3 h-3 rounded-full bg-[#1D9E75] animate-pulse mx-auto mb-2" />
+                     <span className="font-mono text-[10px] tracking-widest text-[#1D9E75]">WAITING FOR LIVE FEED…</span>
+                   </div>
+                 )}
+               </div>
+             ) : (
+               <video
+                 ref={videoRef}
+                 key={selectedCam.id}
+                 src={videoSrc}
+                 className="absolute inset-0 w-full h-full object-cover z-10"
+                 autoPlay
+                 loop
+                 muted
+                 playsInline
+               />
+             )}
 
              {/* Skeleton Overlay — real keypoints or animated fallback */}
              {skeletonVisible && (() => {

@@ -369,6 +369,7 @@ async def analyze_frame_endpoint(payload: FrameRequest):
 
     result = analyze_frame(frame)
     latest_frame_result = result.dict()
+    latest_frame_result["frame_base64"] = payload.image_base64
     return result
 
 

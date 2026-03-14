@@ -8,6 +8,7 @@ import Impact from './pages/Impact';
 import Team from './pages/Team';
 import GuardPWA from './pages/GuardPWA';
 import EvacuationCenter from './pages/EvacuationCenter';
+import CameraStreamer from './pages/CameraStreamer';
 
 function App() {
   return (
@@ -24,6 +25,7 @@ function App() {
             <Route path="/team" element={<Team />} />
             <Route path="/guard-pwa" element={<GuardPWA />} />
             <Route path="/evacuation" element={<EvacuationCenter />} />
+            <Route path="/camera" element={<CameraStreamer />} />
           </Routes>
         </main>
       </div>

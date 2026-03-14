@@ -1,5 +1,5 @@
 import { Link } from 'react-router-dom';
-import { Shield, Play, ArrowRight } from 'lucide-react';
+import { Shield, Play, ArrowRight, Camera } from 'lucide-react';
 import { QRCodeSVG } from 'qrcode.react';
 
 const Navbar = () => {
@@ -26,6 +26,10 @@ const Navbar = () => {
         <Link to="/pipeline" className="hover:text-white transition-colors">Pipeline</Link>
         <Link to="/tech" className="hover:text-white transition-colors">Tech</Link>
         <Link to="/team" className="hover:text-white transition-colors">Team</Link>
+        <Link to="/camera" className="hidden lg:flex items-center gap-1.5 hover:text-[#1D9E75] transition-colors">
+          <Camera className="w-3.5 h-3.5" />
+          <span className="font-mono text-[10px] tracking-wider text-[#1D9E75]">CAMERA NODE</span>
+        </Link>
       </div>
 
       {/* Right section: Action Button & QR Code */}
