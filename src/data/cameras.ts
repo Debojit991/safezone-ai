@@ -11,9 +11,8 @@ export interface Camera {
 }
 
 export const CAMERAS: Camera[] = [
-  { id: 'CAM-LIVE', label: 'Live Camera Feed',    zone: 'Zone LIVE', gps: [22.5726, 88.3639], tier: 'CRITICAL', clip: 'live',     conf: 0,  time: 0 },
-  { id: 'CAM-04', label: 'Molestation Alert',    zone: 'Zone A', gps: [22.56,  88.36],  tier: 'CRITICAL', clip: 'molest',    conf: 91, time: 2.8 },
-  { id: 'CAM-11', label: 'Molestation Alert',    zone: 'Zone B', gps: [22.565, 88.37],  tier: 'CRITICAL', clip: 'molest',    conf: 87, time: 3.1 },
+  { id: 'CAM-04', label: 'Physical Assault',     zone: 'Zone A', gps: [22.56,  88.36],  tier: 'CRITICAL', clip: 'fight',     conf: 91, time: 2.8 },
+  { id: 'CAM-11', label: 'Molestation',          zone: 'Zone B', gps: [22.565, 88.37],  tier: 'CRITICAL', clip: 'molest',    conf: 87, time: 3.1 },
   { id: 'CAM-23', label: 'Crowd Surge',          zone: 'Zone C', gps: [22.55,  88.38],  tier: 'HIGH',     clip: 'surge',     conf: 89, time: 4.2 },
   { id: 'CAM-07', label: 'Fire Detection',       zone: 'Zone D', gps: [22.57,  88.39],  tier: 'CRITICAL', clip: 'fire',      conf: 94, time: 2.1 },
   { id: 'CAM-31', label: 'Stampede Warning',     zone: 'Zone E', gps: [22.58,  88.35],  tier: 'HIGH',     clip: 'stampede',  conf: 82, time: 5.8 },
