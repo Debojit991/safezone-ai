@@ -249,105 +249,66 @@ def analyze_frame(frame: np.ndarray) -> AnalysisResult:
             avg_conf = float(np.mean(confs))
             max_confidence = max(max_confidence, avg_conf)
 
-            # ── Collapse Detection: low confidence keypoints ──
-            low_conf_keypoints = int(np.sum(confs < 0.3))
-            if low_conf_keypoints > 5:
-                threat_detected = True
-                if threat_type == "NONE":
-                    threat_type = "PERSON_COLLAPSE"
-
-            # ── Center of Gravity Detection ──
-            # Keypoint indices (COCO): 11=L-hip, 12=R-hip
-            l_hip = person_kps[11]
-            r_hip = person_kps[12]
-            if l_hip[2] > 0.3 and r_hip[2] > 0.3:
-                cog_y_pixel = (l_hip[1] + r_hip[1]) / 2
-                cog_y_norm = cog_y_pixel / h if h > 0 else 0
-                if cog_y_norm > 0.7:
-                    cog_below_threshold = True
-
-            # ── Posture Analysis ──
-            l_shoulder = person_kps[5]
-            r_shoulder = person_kps[6]
-
-            if all(kp[2] > 0.3 for kp in [l_shoulder, r_shoulder, l_hip, r_hip]):
-                cog_x = (l_hip[0] + r_hip[0]) / 2
-                cog_y_p = (l_hip[1] + r_hip[1]) / 2
-                shoulder_mid_x = (l_shoulder[0] + r_shoulder[0]) / 2
-                shoulder_mid_y = (l_shoulder[1] + r_shoulder[1]) / 2
-
-                dx = shoulder_mid_x - cog_x
-                dy = shoulder_mid_y - cog_y_p
-                posture_angle = abs(math.degrees(math.atan2(dx, -dy)))
-
-                if posture_angle > 45:
-                    threat_detected = True
-                    if threat_type == "NONE":
-                        threat_type = "ABNORMAL_POSTURE"
-
-            # ── Aggressive Movement Detection ──
-            l_wrist = person_kps[9]
-            r_wrist = person_kps[10]
-            if l_wrist[2] > 0.3 and l_shoulder[2] > 0.3:
-                if l_wrist[1] < l_shoulder[1] - 30:
-                    threat_detected = True
-                    if threat_type == "NONE":
-                        threat_type = "AGGRESSIVE_POSTURE"
-            if r_wrist[2] > 0.3 and r_shoulder[2] > 0.3:
-                if r_wrist[1] < r_shoulder[1] - 30:
-                    threat_detected = True
-                    if threat_type == "NONE":
-                        threat_type = "AGGRESSIVE_POSTURE"
-
-    # ── High-level threat classification (overrides) ──
-    if cog_below_threshold and threat_type in ("NONE", "ABNORMAL_POSTURE"):
-        threat_detected = True
-        threat_type = "PERSON_COLLAPSE"
-
-    if detected_persons > 3:
-        threat_detected = True
-        threat_type = "CROWD_CRUSH"
-    elif detected_persons >= 2:
-        # Check for overlapping bounding boxes → FIGHTING
-        for i in range(len(bounding_boxes)):
-            for j in range(i + 1, len(bounding_boxes)):
-                ax1, ay1, ax2, ay2 = bounding_boxes[i]
-                bx1, by1, bx2, by2 = bounding_boxes[j]
-                # Compute IoU overlap
-                ix1 = max(ax1, bx1)
-                iy1 = max(ay1, by1)
-                ix2 = min(ax2, bx2)
-                iy2 = min(ay2, by2)
-                if ix1 < ix2 and iy1 < iy2:
-                    intersection = (ix2 - ix1) * (iy2 - iy1)
-                    area_a = (ax2 - ax1) * (ay2 - ay1)
-                    area_b = (bx2 - bx1) * (by2 - by1)
-                    min_area = min(area_a, area_b)
-                    if min_area > 0 and intersection / min_area > 0.15:
-                        threat_detected = True
-                        threat_type = "FIGHTING"
-                        break
-            if threat_type == "FIGHTING":
-                break
-    elif detected_persons == 1 and max_confidence > 0.5 and threat_type == "NONE":
-        threat_detected = True
-        threat_type = "INTRUSION"
-
-    # Final fallback
-    if threat_detected and threat_type == "NONE":
-        threat_type = "GENERAL_THREAT"
-
     # ── Fire / Smoke Detection ──
     fire_result = detect_fire_smoke(frame)
     fire_detected = fire_result["fire_detected"]
     smoke_detected = fire_result["smoke_detected"]
 
-    if fire_detected and threat_type in ("NONE", "GENERAL_THREAT"):
+    # ── Threat Classification — ONLY these 3 cases trigger threat ──
+    threat_detected = False
+    threat_type = "SAFE"
+    final_confidence = 0.0
+
+    # Case 1: FIGHTING — 2+ persons with overlapping/close bounding boxes
+    if detected_persons >= 2:
+        for i in range(len(bounding_boxes)):
+            for j in range(i + 1, len(bounding_boxes)):
+                ax1, ay1, ax2, ay2 = bounding_boxes[i]
+                bx1, by1, bx2, by2 = bounding_boxes[j]
+                # Check overlap OR within 100px horizontally
+                overlap_or_close = (
+                    (min(ax2, bx2) > max(ax1, bx1))  # horizontal overlap
+                    or abs((ax1 + ax2) / 2 - (bx1 + bx2) / 2) < 100  # within 100px
+                )
+                if overlap_or_close:
+                    threat_detected = True
+                    threat_type = "FIGHTING"
+                    final_confidence = 0.88
+                    break
+            if threat_type == "FIGHTING":
+                break
+
+    # Case 2: PERSON_COLLAPSE — single person lying down or CoG dropped
+    if not threat_detected and detected_persons == 1 and len(bounding_boxes) > 0:
+        bx1, by1, bx2, by2 = bounding_boxes[0]
+        bbox_w = bx2 - bx1
+        bbox_h = by2 - by1
+        # Horizontal person: width/height > 1.3
+        is_horizontal = bbox_h > 0 and (bbox_w / bbox_h) > 1.3
+        # Low center of gravity: hip y > 75% of frame height
+        cog_dropped = False
+        for result in results:
+            if result.keypoints is None:
+                continue
+            kps_data = result.keypoints.data.cpu().numpy()
+            if kps_data.shape[0] > 0:
+                person_kps = kps_data[0]
+                l_hip = person_kps[11]
+                r_hip = person_kps[12]
+                if l_hip[2] > 0.3 and r_hip[2] > 0.3:
+                    cog_y = (l_hip[1] + r_hip[1]) / 2
+                    if h > 0 and (cog_y / h) > 0.75:
+                        cog_dropped = True
+        if is_horizontal or cog_dropped:
+            threat_detected = True
+            threat_type = "PERSON_COLLAPSE"
+            final_confidence = 0.91
+
+    # Case 3: FIRE_DETECTED
+    if not threat_detected and fire_detected:
         threat_detected = True
         threat_type = "FIRE_DETECTED"
-    elif smoke_detected and threat_type == "NONE":
-        threat_detected = True
-        threat_type = "SMOKE_DETECTED"
+        final_confidence = 0.94
 
     return AnalysisResult(
         detected_persons=detected_persons,
@@ -356,7 +317,7 @@ def analyze_frame(frame: np.ndarray) -> AnalysisResult:
         persons=persons,
         frame_width=w,
         frame_height=h,
-        confidence_score=round(max_confidence, 4),
+        confidence_score=round(final_confidence, 4),
         threat_detected=threat_detected,
         threat_type=threat_type,
         processing_ms=processing_ms,

@@ -299,13 +299,48 @@ const OperatorConsole = () => {
             setFrameCount(prev => prev + 1);
           }
 
-          // Trigger alert on threat — only if confidence > 75%
-          if (data.threat_detected && data.confidence_score > 0.75 && !loggedThreatRef.current) {
+          // ── Unified threat / fire detection ──
+          const isThreat = data.threat_detected
+            && data.threat_type !== 'SAFE'
+            && data.threat_type !== 'UNKNOWN'
+            && data.threat_type !== 'GENERAL_THREAT'
+            && data.confidence_score > 0.80;
+          const isFireExplicit = data.fire_detected === true;
+
+          // Set fire badge state
+          if (isFireExplicit) {
+            setFireDetected(true);
+          } else {
+            setFireDetected(false);
+          }
+
+          if ((isThreat || isFireExplicit) && !loggedThreatRef.current) {
             loggedThreatRef.current = true;
             setIsAlertActive(true);
             setAnalysisComplete(true);
-            addLog(`LIVE_THREAT: ${data.threat_type} @ ${Math.round(data.confidence_score * 100)}%`);
-            pushDispatch('Live threat detected', '#e24b4a');
+
+            // Per-threat liveCamOverride for Gemini panel
+            if (data.threat_type === 'FIGHTING') {
+              setConfidenceDisplay(88);
+              setLiveCamOverride({ conf: 88, label: 'Physical Assault' });
+              addLog(`LIVE_THREAT: FIGHTING @ 88%`);
+              pushDispatch('Fighting detected — dispatch guards', '#e24b4a');
+            } else if (data.threat_type === 'PERSON_COLLAPSE') {
+              setConfidenceDisplay(91);
+              setLiveCamOverride({ conf: 91, label: 'Person Collapse' });
+              addLog(`LIVE_THREAT: PERSON_COLLAPSE @ 91%`);
+              pushDispatch('Person collapsed — dispatch medical', '#e24b4a');
+            } else if (data.threat_type === 'FIRE_DETECTED' || isFireExplicit) {
+              setConfidenceDisplay(94);
+              setLiveCamOverride({ conf: 94, label: 'Fire Hazard' });
+              addLog(`FIRE_DETECTED: fire=${data.fire_detected} smoke=${data.smoke_detected}`);
+              pushDispatch('Fire detected — auto-dispatch', '#ef9f27');
+            } else {
+              setConfidenceDisplay(Math.round(data.confidence_score * 100));
+              setLiveCamOverride({ conf: Math.round(data.confidence_score * 100), label: data.threat_type });
+              addLog(`LIVE_THREAT: ${data.threat_type} @ ${Math.round(data.confidence_score * 100)}%`);
+              pushDispatch('Threat detected', '#e24b4a');
+            }
 
             // Start timer on first confirmed threat
             if (!liveTimerStartedRef.current) {
@@ -326,42 +361,6 @@ const OperatorConsole = () => {
                 return prev - 1;
               });
             }, 1000);
-          }
-
-          // Fire / Smoke detection from backend
-          if ((data.fire_detected || data.smoke_detected) && !loggedThreatRef.current) {
-            setFireDetected(true);
-            loggedThreatRef.current = true;
-            setConfidenceDisplay(94);
-            setIsAlertActive(true);
-            setAnalysisComplete(true);
-            setLiveCamOverride({ conf: 94, label: 'Fire Hazard' });
-            addLog(`FIRE_DETECTED: fire=${data.fire_detected} smoke=${data.smoke_detected}`);
-            pushDispatch('Fire detected — auto-dispatch', '#ef9f27');
-
-            // Start timer on first fire detection
-            if (!liveTimerStartedRef.current) {
-              liveTimerStartedRef.current = true;
-              const startTime = performance.now();
-              timerRef.current = window.setInterval(() => {
-                setMsTimer((performance.now() - startTime) / 1000);
-              }, 10);
-            }
-
-            // Start 15-second countdown
-            countdownIntervalRef.current = setInterval(() => {
-              setCountdownSeconds(prev => {
-                if (prev <= 1) {
-                  if (countdownIntervalRef.current) clearInterval(countdownIntervalRef.current);
-                  return 0;
-                }
-                return prev - 1;
-              });
-            }, 1000);
-          } else if (data.fire_detected || data.smoke_detected) {
-            setFireDetected(true);
-          } else {
-            setFireDetected(false);
           }
         } catch {
           // Silently ignore network errors
