@@ -74,7 +74,9 @@ const OperatorConsole = () => {
   const [liveFrameSrc, setLiveFrameSrc] = useState('');
   const [liveCameraActive, setLiveCameraActive] = useState(false);
   const [fireDetected, setFireDetected] = useState(false);
+  const [liveCamOverride, setLiveCamOverride] = useState<Partial<Camera> | null>(null);
   const liveDetectRef = useRef<ReturnType<typeof setInterval> | null>(null);
+  const liveTimerStartedRef = useRef(false);
 
   // ── HELPERS ──
   const getMarkerColor = (tier: string) => {
@@ -241,7 +243,9 @@ const OperatorConsole = () => {
       setRealKeypointPositions([]);
       setLiveFrameSrc('');
       loggedThreatRef.current = false;
+      liveTimerStartedRef.current = false;
       setConfidenceDisplay(0);
+      setLiveCamOverride(null);
       setSelectedCam(cam);
       addLog(`CAM_SELECT: ${cam.id} [${cam.label}]`);
 
@@ -261,15 +265,11 @@ const OperatorConsole = () => {
             return;
           }
 
-          // First time we get real frame data — activate skeleton + timer
+          // First time we get real frame data — activate skeleton
           if (!feedStarted && data.frame_base64 && data.frame_base64.length > 0) {
             feedStarted = true;
             setSkeletonVisible(true);
-            // Start detection timer now
-            const startTime = performance.now();
-            timerRef.current = window.setInterval(() => {
-              setMsTimer((performance.now() - startTime) / 1000);
-            }, 10);
+            // Do NOT start timer here — only start on confirmed threat
           }
 
           // Update live frame image
@@ -304,6 +304,15 @@ const OperatorConsole = () => {
             addLog(`LIVE_THREAT: ${data.threat_type} @ ${Math.round(data.confidence_score * 100)}%`);
             pushDispatch('Live threat detected', '#e24b4a');
 
+            // Start timer on first confirmed threat
+            if (!liveTimerStartedRef.current) {
+              liveTimerStartedRef.current = true;
+              const startTime = performance.now();
+              timerRef.current = window.setInterval(() => {
+                setMsTimer((performance.now() - startTime) / 1000);
+              }, 10);
+            }
+
             // Start 15-second countdown
             countdownIntervalRef.current = setInterval(() => {
               setCountdownSeconds(prev => {
@@ -323,8 +332,18 @@ const OperatorConsole = () => {
             setConfidenceDisplay(94);
             setIsAlertActive(true);
             setAnalysisComplete(true);
+            setLiveCamOverride({ conf: 94, label: 'Fire Hazard' });
             addLog(`FIRE_DETECTED: fire=${data.fire_detected} smoke=${data.smoke_detected}`);
             pushDispatch('Fire detected — auto-dispatch', '#ef9f27');
+
+            // Start timer on first fire detection
+            if (!liveTimerStartedRef.current) {
+              liveTimerStartedRef.current = true;
+              const startTime = performance.now();
+              timerRef.current = window.setInterval(() => {
+                setMsTimer((performance.now() - startTime) / 1000);
+              }, 10);
+            }
 
             // Start 15-second countdown
             countdownIntervalRef.current = setInterval(() => {
@@ -564,6 +583,8 @@ const OperatorConsole = () => {
     setRealKeypointPositions([]);
     setLiveFrameSrc('');
     setFireDetected(false);
+    setLiveCamOverride(null);
+    liveTimerStartedRef.current = false;
     if (skeletonSyncRef.current) { clearInterval(skeletonSyncRef.current); skeletonSyncRef.current = null; }
     precomputedRef.current = [];
     loggedThreatRef.current = false;
@@ -1023,7 +1044,7 @@ const OperatorConsole = () => {
             >
               <GeminiAnalysis
                 key={selectedCam.id}
-                cam={selectedCam}
+                cam={{...selectedCam, ...(liveCamOverride ?? {})} as Camera}
                 keypointCount={keypointCount}
                 frameCount={frameCount}
                 isVisible={analysisComplete}
@@ -1098,14 +1119,17 @@ const OperatorConsole = () => {
             initial={{ y: 200, opacity: 0 }}
             animate={{ y: 0, opacity: 1 }}
             exit={{ y: 200, opacity: 0 }}
+            className="bg-[#0e141e] rounded-xl overflow-hidden shadow-[0_20px_50px_rgba(0,0,0,0.6)]"
             style={{
-              position: 'fixed',
+              position: 'fixed' as const,
               bottom: 24,
               right: 24,
               zIndex: 9999,
               width: 300,
+              border: '1px solid #2c3440',
+              borderRadius: 12,
+              background: '#0e141e',
             }}
-            className="bg-[#0e141e] border border-[#1a2535] rounded-xl overflow-hidden shadow-[0_20px_50px_rgba(0,0,0,0.6)]"
           >
             {/* Header */}
             <div className="bg-[#151920] px-3 py-2 flex items-center justify-between border-b border-[#1a2535]">
