@@ -76,6 +76,8 @@ const OperatorConsole = () => {
   const [fireDetected, setFireDetected] = useState(false);
   const [liveCamOverride, setLiveCamOverride] = useState<Partial<Camera> | null>(null);
   const liveTimerStartedRef = useRef(false);
+  const liveFailCountRef = useRef(0);
+  const livePollFailRef = useRef(0);
 
   // ── HELPERS ──
   const getMarkerColor = (tier: string) => {
@@ -163,16 +165,16 @@ const OperatorConsole = () => {
     };
   }, []);
 
-  // Stale frame detection — if liveFrameSrc hasn't updated in 8s, clear it
+  // Stale frame detection — if liveFrameSrc hasn't updated in 20s, clear it
   const lastFrameTimestampRef = useRef<number>(0);
   useEffect(() => {
     if (!liveFrameSrc) return;
     lastFrameTimestampRef.current = Date.now();
     const check = setTimeout(() => {
-      if (liveFrameSrc && Date.now() - lastFrameTimestampRef.current >= 8000) {
+      if (liveFrameSrc && Date.now() - lastFrameTimestampRef.current >= 20000) {
         setLiveFrameSrc('');
       }
-    }, 8100);
+    }, 20100);
     return () => clearTimeout(check);
   }, [liveFrameSrc]);
 
@@ -183,13 +185,24 @@ const OperatorConsole = () => {
         const res = await fetch(`${BACKEND_URL}/live-keypoints`, {
           signal: AbortSignal.timeout(8000)
         });
-        if (!res.ok) { setLiveCameraActive(false); return; }
+        if (!res.ok) {
+          liveFailCountRef.current += 1;
+          if (liveFailCountRef.current > 4) setLiveCameraActive(false);
+          return;
+        }
         const data = await res.json();
         console.log('LIVE-KEYPOINTS RESPONSE:', JSON.stringify(data).substring(0, 200));
         const hasFrame = data && typeof data === 'object' && !data.message && Object.keys(data).length > 2;
-        setLiveCameraActive(hasFrame);
+        if (hasFrame) {
+          liveFailCountRef.current = 0;
+          setLiveCameraActive(true);
+        } else {
+          liveFailCountRef.current += 1;
+          if (liveFailCountRef.current > 4) setLiveCameraActive(false);
+        }
       } catch {
-        setLiveCameraActive(false);
+        liveFailCountRef.current += 1;
+        if (liveFailCountRef.current > 4) setLiveCameraActive(false);
       }
     }, 3000);
     return () => clearInterval(id);
@@ -262,9 +275,10 @@ const OperatorConsole = () => {
           if (!res.ok) return;
           const data = await res.json();
 
-          // If backend says no frames analyzed, clear stale frame
+          // If backend says no frames analyzed, count as failure
           if (data.message === 'no frames analyzed yet') {
-            setLiveFrameSrc('');
+            livePollFailRef.current += 1;
+            if (livePollFailRef.current > 3) setLiveFrameSrc('');
             return;
           }
 
@@ -277,6 +291,7 @@ const OperatorConsole = () => {
 
           // Update live frame image
           if (data.frame_base64) {
+            livePollFailRef.current = 0;
             setLiveFrameSrc(`data:image/jpeg;base64,${data.frame_base64}`);
           }
 
@@ -363,9 +378,10 @@ const OperatorConsole = () => {
             }, 1000);
           }
         } catch {
-          // Silently ignore network errors
+          livePollFailRef.current += 1;
+          if (livePollFailRef.current > 3) setLiveFrameSrc('');
         }
-      }, 3000);
+      }, 500);
 
       return; // Skip normal camera logic
     }
