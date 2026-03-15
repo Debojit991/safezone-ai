@@ -126,7 +126,7 @@ const OperatorConsole = () => {
   useEffect(() => {
     const checkHealth = async () => {
       try {
-        const res = await fetch(`${BACKEND_URL}/health`, { signal: AbortSignal.timeout(2000) });
+        const res = await fetch(`${BACKEND_URL}/health`, { signal: AbortSignal.timeout(8000) });
         if (res.ok) {
           const data = await res.json();
           setBackendConnected(data.model_loaded === true);
@@ -181,7 +181,7 @@ const OperatorConsole = () => {
     const id = setInterval(async () => {
       try {
         const res = await fetch(`${BACKEND_URL}/live-keypoints`, {
-          signal: AbortSignal.timeout(2000)
+          signal: AbortSignal.timeout(8000)
         });
         if (!res.ok) { setLiveCameraActive(false); return; }
         const data = await res.json();
@@ -191,7 +191,7 @@ const OperatorConsole = () => {
       } catch {
         setLiveCameraActive(false);
       }
-    }, 1500);
+    }, 3000);
     return () => clearInterval(id);
   }, []);
 
@@ -257,7 +257,7 @@ const OperatorConsole = () => {
       livePollingRef.current = setInterval(async () => {
         try {
           const res = await fetch(`${BACKEND_URL}/live-keypoints`, {
-            signal: AbortSignal.timeout(2000),
+            signal: AbortSignal.timeout(8000),
           });
           if (!res.ok) return;
           const data = await res.json();
