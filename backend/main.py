@@ -254,61 +254,19 @@ def analyze_frame(frame: np.ndarray) -> AnalysisResult:
     fire_detected = fire_result["fire_detected"]
     smoke_detected = fire_result["smoke_detected"]
 
-    # ── Threat Classification — ONLY these 3 cases trigger threat ──
+    # ── Threat Classification — FIRE ONLY ──
     threat_detected = False
     threat_type = "SAFE"
     final_confidence = 0.0
 
-    # Case 1: FIGHTING — 2+ persons with overlapping/close bounding boxes
-    if detected_persons >= 2:
-        for i in range(len(bounding_boxes)):
-            for j in range(i + 1, len(bounding_boxes)):
-                ax1, ay1, ax2, ay2 = bounding_boxes[i]
-                bx1, by1, bx2, by2 = bounding_boxes[j]
-                # Check overlap OR within 100px horizontally
-                overlap_or_close = (
-                    (min(ax2, bx2) > max(ax1, bx1))  # horizontal overlap
-                    or abs((ax1 + ax2) / 2 - (bx1 + bx2) / 2) < 100  # within 100px
-                )
-                if overlap_or_close:
-                    threat_detected = True
-                    threat_type = "FIGHTING"
-                    final_confidence = 0.88
-                    break
-            if threat_type == "FIGHTING":
-                break
-
-    # Case 2: PERSON_COLLAPSE — single person lying down or CoG dropped
-    if not threat_detected and detected_persons == 1 and len(bounding_boxes) > 0:
-        bx1, by1, bx2, by2 = bounding_boxes[0]
-        bbox_w = bx2 - bx1
-        bbox_h = by2 - by1
-        # Horizontal person: width/height > 1.3
-        is_horizontal = bbox_h > 0 and (bbox_w / bbox_h) > 1.3
-        # Low center of gravity: hip y > 75% of frame height
-        cog_dropped = False
-        for result in results:
-            if result.keypoints is None:
-                continue
-            kps_data = result.keypoints.data.cpu().numpy()
-            if kps_data.shape[0] > 0:
-                person_kps = kps_data[0]
-                l_hip = person_kps[11]
-                r_hip = person_kps[12]
-                if l_hip[2] > 0.3 and r_hip[2] > 0.3:
-                    cog_y = (l_hip[1] + r_hip[1]) / 2
-                    if h > 0 and (cog_y / h) > 0.75:
-                        cog_dropped = True
-        if is_horizontal or cog_dropped:
-            threat_detected = True
-            threat_type = "PERSON_COLLAPSE"
-            final_confidence = 0.91
-
-    # Case 3: FIRE_DETECTED
-    if not threat_detected and fire_detected:
+    if fire_detected:
         threat_detected = True
         threat_type = "FIRE_DETECTED"
         final_confidence = 0.94
+    elif smoke_detected:
+        threat_detected = True
+        threat_type = "SMOKE_DETECTED"
+        final_confidence = 0.88
 
     return AnalysisResult(
         detected_persons=detected_persons,
