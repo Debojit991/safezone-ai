@@ -73,6 +73,7 @@ const OperatorConsole = () => {
   // Live camera state
   const [liveFrameSrc, setLiveFrameSrc] = useState('');
   const [liveCameraActive, setLiveCameraActive] = useState(false);
+  const [fireDetected, setFireDetected] = useState(false);
   const liveDetectRef = useRef<ReturnType<typeof setInterval> | null>(null);
 
   // ── HELPERS ──
@@ -314,6 +315,32 @@ const OperatorConsole = () => {
               });
             }, 1000);
           }
+
+          // Fire / Smoke detection from backend
+          if ((data.fire_detected || data.smoke_detected) && !loggedThreatRef.current) {
+            setFireDetected(true);
+            loggedThreatRef.current = true;
+            setConfidenceDisplay(94);
+            setIsAlertActive(true);
+            setAnalysisComplete(true);
+            addLog(`FIRE_DETECTED: fire=${data.fire_detected} smoke=${data.smoke_detected}`);
+            pushDispatch('Fire detected — auto-dispatch', '#ef9f27');
+
+            // Start 15-second countdown
+            countdownIntervalRef.current = setInterval(() => {
+              setCountdownSeconds(prev => {
+                if (prev <= 1) {
+                  if (countdownIntervalRef.current) clearInterval(countdownIntervalRef.current);
+                  return 0;
+                }
+                return prev - 1;
+              });
+            }, 1000);
+          } else if (data.fire_detected || data.smoke_detected) {
+            setFireDetected(true);
+          } else {
+            setFireDetected(false);
+          }
         } catch {
           // Silently ignore network errors
         }
@@ -536,6 +563,7 @@ const OperatorConsole = () => {
     setDispatchLog([]);
     setRealKeypointPositions([]);
     setLiveFrameSrc('');
+    setFireDetected(false);
     if (skeletonSyncRef.current) { clearInterval(skeletonSyncRef.current); skeletonSyncRef.current = null; }
     precomputedRef.current = [];
     loggedThreatRef.current = false;
@@ -750,6 +778,14 @@ const OperatorConsole = () => {
                    <div className="text-center">
                      <div className="w-3 h-3 rounded-full bg-[#1D9E75] animate-pulse mx-auto mb-2" />
                      <span className="font-mono text-[10px] tracking-widest text-[#1D9E75]">FEED INTERRUPTED — RECONNECTING…</span>
+                   </div>
+                 )}
+                 {/* Fire detection badge */}
+                 {fireDetected && (
+                   <div className="absolute top-10 left-3 z-30 flex items-center gap-1.5 px-2 py-1 rounded border border-orange-500 animate-pulse"
+                     style={{ background: 'rgba(255,100,0,0.2)' }}
+                   >
+                     <span className="font-mono font-bold text-[11px] tracking-wider" style={{ color: '#ff6400' }}>🔥 FIRE DETECTED</span>
                    </div>
                  )}
                </div>

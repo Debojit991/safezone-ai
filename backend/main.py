@@ -33,6 +33,7 @@ app.add_middleware(
 
 # ─── Global State ───
 model: Optional[YOLO] = None
+fire_model: Optional[YOLO] = None
 start_time: float = 0.0
 latest_frame_result: dict = {}
 
@@ -67,6 +68,8 @@ class AnalysisResult(BaseModel):
     threat_detected: bool
     threat_type: str
     processing_ms: int
+    fire_detected: bool = False
+    smoke_detected: bool = False
 
 
 class FramePayload(BaseModel):
@@ -94,19 +97,43 @@ def _empty_result(threat_type: str = "NONE", processing_ms: int = 0) -> Analysis
         threat_detected=False,
         threat_type=threat_type,
         processing_ms=processing_ms,
+        fire_detected=False,
+        smoke_detected=False,
     )
 
 
 # ─── Startup ───
 @app.on_event("startup")
 async def load_model():
-    global model, start_time
+    global model, fire_model, start_time
     start_time = time.time()
     model = YOLO("yolov8n-pose.pt")
+    fire_model = YOLO("yolov8n.pt")
     # Warm up with a dummy frame
     dummy = np.zeros((480, 640, 3), dtype=np.uint8)
     model(dummy, verbose=False)
-    print("✅ YOLOv8-Pose model loaded and warmed up")
+    fire_model(dummy, verbose=False)
+    print("✅ YOLOv8-Pose + fire detection models loaded and warmed up")
+
+
+def detect_fire_smoke(frame: np.ndarray) -> dict:
+    """
+    Detect fire/smoke by analyzing HSV pixel distribution.
+    Fire pixels: hue 0-30, saturation > 100, value > 150 (orange-red).
+    fire_detected  = fire pixels > 8% of total
+    smoke_detected = fire pixels > 5% of total
+    """
+    hsv = cv2.cvtColor(frame, cv2.COLOR_BGR2HSV)
+    h, s, v = hsv[:, :, 0], hsv[:, :, 1], hsv[:, :, 2]
+    fire_mask = (h <= 30) & (s > 100) & (v > 150)
+    total_pixels = frame.shape[0] * frame.shape[1]
+    fire_pixel_count = int(np.sum(fire_mask))
+    fire_ratio = fire_pixel_count / total_pixels if total_pixels > 0 else 0.0
+    return {
+        "fire_detected": fire_ratio > 0.08,
+        "smoke_detected": fire_ratio > 0.05,
+        "fire_pixel_ratio": round(fire_ratio, 4),
+    }
 
 
 # ─── Analysis Logic ───
@@ -279,6 +306,18 @@ def analyze_frame(frame: np.ndarray) -> AnalysisResult:
     if threat_detected and threat_type == "NONE":
         threat_type = "GENERAL_THREAT"
 
+    # ── Fire / Smoke Detection ──
+    fire_result = detect_fire_smoke(frame)
+    fire_detected = fire_result["fire_detected"]
+    smoke_detected = fire_result["smoke_detected"]
+
+    if fire_detected and threat_type in ("NONE", "GENERAL_THREAT"):
+        threat_detected = True
+        threat_type = "FIRE_DETECTED"
+    elif smoke_detected and threat_type == "NONE":
+        threat_detected = True
+        threat_type = "SMOKE_DETECTED"
+
     return AnalysisResult(
         detected_persons=detected_persons,
         keypoints_raw=keypoints_raw,
@@ -290,6 +329,8 @@ def analyze_frame(frame: np.ndarray) -> AnalysisResult:
         threat_detected=threat_detected,
         threat_type=threat_type,
         processing_ms=processing_ms,
+        fire_detected=fire_detected,
+        smoke_detected=smoke_detected,
     )
 
 
