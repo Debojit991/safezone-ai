@@ -79,6 +79,7 @@ const OperatorConsole = () => {
   const liveTimerStartedRef = useRef(false);
   const liveFailCountRef = useRef(0);
   const livePollFailRef = useRef(0);
+  const liveFetchingRef = useRef(false);
 
   // ── HELPERS ──
   const getMarkerColor = (tier: string) => {
@@ -127,7 +128,10 @@ const OperatorConsole = () => {
 
   // ── BACKEND HEALTH CHECK ──
   useEffect(() => {
+    let healthFetching = false;
     const checkHealth = async () => {
+      if (healthFetching) return;
+      healthFetching = true;
       setBackendWaking(true);
       try {
         const res = await fetch(`${BACKEND_URL}/health`, { signal: AbortSignal.timeout(90000) });
@@ -141,10 +145,11 @@ const OperatorConsole = () => {
         setBackendConnected(false);
       } finally {
         setBackendWaking(false);
+        healthFetching = false;
       }
     };
     checkHealth();
-    const id = setInterval(checkHealth, 20000);
+    const id = setInterval(checkHealth, 30000);
     return () => clearInterval(id);
   }, []);
 
@@ -184,7 +189,10 @@ const OperatorConsole = () => {
 
   // Poll backend to detect if live camera is active
   useEffect(() => {
+    let activeFetching = false;
     const id = setInterval(async () => {
+      if (activeFetching) return;
+      activeFetching = true;
       try {
         const res = await fetch(`${BACKEND_URL}/live-keypoints`, {
           signal: AbortSignal.timeout(90000)
@@ -207,8 +215,10 @@ const OperatorConsole = () => {
       } catch {
         liveFailCountRef.current += 1;
         if (liveFailCountRef.current > 4) setLiveCameraActive(false);
+      } finally {
+        activeFetching = false;
       }
-    }, 3000);
+    }, 5000);
     return () => clearInterval(id);
   }, []);
 
@@ -271,7 +281,10 @@ const OperatorConsole = () => {
 
       // Start live polling interval — do NOT start timer/skeleton until feed arrives
       let feedStarted = false;
+      liveFetchingRef.current = false;
       livePollingRef.current = setInterval(async () => {
+        if (liveFetchingRef.current) return;
+        liveFetchingRef.current = true;
         try {
           const res = await fetch(`${BACKEND_URL}/live-keypoints`, {
             signal: AbortSignal.timeout(90000),
@@ -384,8 +397,10 @@ const OperatorConsole = () => {
         } catch {
           livePollFailRef.current += 1;
           if (livePollFailRef.current > 3) setLiveFrameSrc('');
+        } finally {
+          liveFetchingRef.current = false;
         }
-      }, 500);
+      }, 2000);
 
       return; // Skip normal camera logic
     }
