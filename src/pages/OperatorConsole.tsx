@@ -52,6 +52,7 @@ const OperatorConsole = () => {
   const [realKeypointPositions, setRealKeypointPositions] = useState<{x: number; y: number; confidence: number}[]>([]);
   const [dispatchLog, setDispatchLog] = useState<{time: string; text: string; color: string}[]>([]);
   const [backendConnected, setBackendConnected] = useState(false);
+  const [backendWaking, setBackendWaking] = useState(false);
 
   // ── CONFIDENCE SYSTEM (rewritten) ──
   const [confidenceDisplay, setConfidenceDisplay] = useState(0);
@@ -127,8 +128,9 @@ const OperatorConsole = () => {
   // ── BACKEND HEALTH CHECK ──
   useEffect(() => {
     const checkHealth = async () => {
+      setBackendWaking(true);
       try {
-        const res = await fetch(`${BACKEND_URL}/health`, { signal: AbortSignal.timeout(8000) });
+        const res = await fetch(`${BACKEND_URL}/health`, { signal: AbortSignal.timeout(90000) });
         if (res.ok) {
           const data = await res.json();
           setBackendConnected(data.model_loaded === true);
@@ -137,10 +139,12 @@ const OperatorConsole = () => {
         }
       } catch {
         setBackendConnected(false);
+      } finally {
+        setBackendWaking(false);
       }
     };
     checkHealth();
-    const id = setInterval(checkHealth, 30000);
+    const id = setInterval(checkHealth, 20000);
     return () => clearInterval(id);
   }, []);
 
@@ -183,7 +187,7 @@ const OperatorConsole = () => {
     const id = setInterval(async () => {
       try {
         const res = await fetch(`${BACKEND_URL}/live-keypoints`, {
-          signal: AbortSignal.timeout(8000)
+          signal: AbortSignal.timeout(90000)
         });
         if (!res.ok) {
           liveFailCountRef.current += 1;
@@ -270,7 +274,7 @@ const OperatorConsole = () => {
       livePollingRef.current = setInterval(async () => {
         try {
           const res = await fetch(`${BACKEND_URL}/live-keypoints`, {
-            signal: AbortSignal.timeout(8000),
+            signal: AbortSignal.timeout(90000),
           });
           if (!res.ok) return;
           const data = await res.json();
@@ -754,9 +758,18 @@ const OperatorConsole = () => {
           <div className="flex items-center gap-3">
             <ShieldAlert className="w-5 h-5 text-[#1D9E75]" />
             <span className="font-bold tracking-widest text-xs text-white">OPERATOR CONSOLE — LIVE</span>
-            <div className={`flex items-center gap-1.5 px-2 py-0.5 rounded-full border ${backendConnected ? 'bg-[#1D9E75]/10 border-[#1D9E75]/20' : 'bg-[#F59E0B]/10 border-[#F59E0B]/20'}`}>
-              <div className={`w-1.5 h-1.5 rounded-full animate-pulse ${backendConnected ? 'bg-[#1D9E75]' : 'bg-[#F59E0B]'}`}></div>
-              <span className={`text-[9px] font-mono uppercase font-bold ${backendConnected ? 'text-[#1D9E75]' : 'text-[#F59E0B]'}`}>{backendConnected ? 'BACKEND CONNECTED' : 'SIMULATION MODE'}</span>
+            <div className={`flex items-center gap-1.5 px-2 py-0.5 rounded-full border ${backendConnected ? 'bg-[#1D9E75]/10 border-[#1D9E75]/20' : backendWaking ? 'bg-[#F59E0B]/10 border-[#F59E0B]/20' : 'bg-[#F59E0B]/10 border-[#F59E0B]/20'}`}>
+              {backendWaking && !backendConnected ? (
+                <>
+                  <div className="w-1.5 h-1.5 rounded-full animate-spin border border-[#F59E0B] border-t-transparent"></div>
+                  <span className="text-[9px] font-mono uppercase font-bold text-[#F59E0B]">BACKEND WAKING UP...</span>
+                </>
+              ) : (
+                <>
+                  <div className={`w-1.5 h-1.5 rounded-full animate-pulse ${backendConnected ? 'bg-[#1D9E75]' : 'bg-[#F59E0B]'}`}></div>
+                  <span className={`text-[9px] font-mono uppercase font-bold ${backendConnected ? 'text-[#1D9E75]' : 'text-[#F59E0B]'}`}>{backendConnected ? 'BACKEND CONNECTED' : 'SIMULATION MODE'}</span>
+                </>
+              )}
             </div>
           </div>
           <div className="flex items-center gap-2">
