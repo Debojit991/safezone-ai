@@ -236,7 +236,7 @@ const OperatorConsole = () => {
       setFrameCount(0);
       setMsTimer(0);
       setDispatchLog([]);
-      setSkeletonVisible(true);
+      setSkeletonVisible(false);
       setRealKeypointPositions([]);
       setLiveFrameSrc('');
       loggedThreatRef.current = false;
@@ -244,13 +244,8 @@ const OperatorConsole = () => {
       setSelectedCam(cam);
       addLog(`CAM_SELECT: ${cam.id} [${cam.label}]`);
 
-      // Start detection timer
-      const startTime = performance.now();
-      timerRef.current = window.setInterval(() => {
-        setMsTimer((performance.now() - startTime) / 1000);
-      }, 10);
-
-      // Start live polling interval
+      // Start live polling interval — do NOT start timer/skeleton until feed arrives
+      let feedStarted = false;
       livePollingRef.current = setInterval(async () => {
         try {
           const res = await fetch(`${BACKEND_URL}/live-keypoints`, {
@@ -263,6 +258,17 @@ const OperatorConsole = () => {
           if (data.message === 'no frames analyzed yet') {
             setLiveFrameSrc('');
             return;
+          }
+
+          // First time we get real frame data — activate skeleton + timer
+          if (!feedStarted && data.frame_base64 && data.frame_base64.length > 0) {
+            feedStarted = true;
+            setSkeletonVisible(true);
+            // Start detection timer now
+            const startTime = performance.now();
+            timerRef.current = window.setInterval(() => {
+              setMsTimer((performance.now() - startTime) / 1000);
+            }, 10);
           }
 
           // Update live frame image
@@ -311,7 +317,7 @@ const OperatorConsole = () => {
         } catch {
           // Silently ignore network errors
         }
-      }, 300);
+      }, 3000);
 
       return; // Skip normal camera logic
     }
@@ -890,109 +896,38 @@ const OperatorConsole = () => {
                 initial={{ opacity: 0, y: 20 }}
                 animate={{ opacity: 1, y: 0 }}
                 exit={{ opacity: 0, y: 20 }}
-                className="w-full bg-[#0f1520] border border-[#1a2535] rounded-lg p-4 flex flex-col gap-4 shadow-xl"
+                className="w-full bg-[#0f1520] border border-[#1a2535] rounded-lg p-4 flex gap-4 shadow-xl"
               >
-                <div className="flex gap-4">
-                  <div className="flex-1 flex flex-col gap-3">
-                    <div className="flex justify-between items-start">
-                      <div className="text-[10px] font-mono font-bold text-[#e24b4a] tracking-widest uppercase">
-                        CRITICAL ALERT
-                      </div>
-                      {guardResponded ? (
-                        <div className="flex items-center gap-1.5 bg-[#1D9E75]/10 px-2 py-0.5 rounded text-[#1D9E75] border border-[#1D9E75]/30">
-                           <div className="w-1.5 h-1.5 rounded-full bg-[#1D9E75] animate-pulse"></div>
-                           <span className="text-[9px] uppercase font-bold tracking-widest">RESPONDING</span>
-                        </div>
-                      ) : (
-                        <div className="flex items-center gap-1.5 bg-[#e24b4a]/10 px-2 py-0.5 rounded text-[#e24b4a] border border-[#e24b4a]/30">
-                           <span className="text-[9px] uppercase font-bold tracking-widest">DISPATCHED</span>
-                        </div>
-                      )}
+                <div className="flex-1 flex flex-col gap-3">
+                  <div className="flex justify-between items-start">
+                    <div className="text-[10px] font-mono font-bold text-[#e24b4a] tracking-widest uppercase">
+                      CRITICAL ALERT
                     </div>
-
-                    <h2 className="text-lg font-bold text-white">{selectedCam.label}</h2>
-                    <p className="text-gray-400 text-xs leading-relaxed">
-                      Movement detected in restricted zone {selectedCam.zone}. No authorised personnel scheduled.
-                    </p>
+                    {guardResponded ? (
+                      <div className="flex items-center gap-1.5 bg-[#1D9E75]/10 px-2 py-0.5 rounded text-[#1D9E75] border border-[#1D9E75]/30">
+                         <div className="w-1.5 h-1.5 rounded-full bg-[#1D9E75] animate-pulse"></div>
+                         <span className="text-[9px] uppercase font-bold tracking-widest">RESPONDING</span>
+                      </div>
+                    ) : (
+                      <div className="flex items-center gap-1.5 bg-[#e24b4a]/10 px-2 py-0.5 rounded text-[#e24b4a] border border-[#e24b4a]/30">
+                         <span className="text-[9px] uppercase font-bold tracking-widest">DISPATCHED</span>
+                      </div>
+                    )}
                   </div>
 
-                  {/* Mini Map */}
-                  <div className="w-36 h-28 bg-black rounded overflow-hidden border border-[#1a2535] shrink-0 pointer-events-none relative">
-                     <MapContainer key={`alertmap-${selectedCam.id}`} center={selectedCam.gps} zoom={15} zoomControl={false} className="w-full h-full">
-                       <TileLayer url="https://{s}.tile.openstreetmap.org/{z}/{x}/{y}.png" />
-                       <CircleMarker center={selectedCam.gps} radius={6} pathOptions={{ color: '#e24b4a', fillColor: '#e24b4a', fillOpacity: 0.8 }} />
-                     </MapContainer>
-                     <div className="absolute top-1/2 left-1/2 -translate-x-1/2 -translate-y-1/2 w-5 h-5 rounded-full border-2 border-[#e24b4a] animate-ping opacity-50" style={{ zIndex: 10 }}></div>
-                  </div>
+                  <h2 className="text-lg font-bold text-white">{selectedCam.label}</h2>
+                  <p className="text-gray-400 text-xs leading-relaxed">
+                    Movement detected in restricted zone {selectedCam.zone}. No authorised personnel scheduled.
+                  </p>
                 </div>
 
-                {/* Divider */}
-                <div className="border-t border-[#1a2535]" />
-
-                {/* Response Card — integrated */}
-                <div>
-                  {alertStatus === 'PENDING' && !guardResponded ? (
-                    <div className="flex flex-col items-center gap-3">
-                      <div className="relative w-16 h-16">
-                        <svg className="w-16 h-16 -rotate-90" viewBox="0 0 80 80">
-                          <circle cx="40" cy="40" r="34" fill="none" stroke="#1a2535" strokeWidth="4" />
-                          <circle
-                            cx="40" cy="40" r="34" fill="none"
-                            strokeWidth="4"
-                            strokeLinecap="round"
-                            stroke={countdownSeconds > 8 ? '#1D9E75' : countdownSeconds > 3 ? '#F59E0B' : '#EF4444'}
-                            strokeDasharray={`${2 * Math.PI * 34}`}
-                            strokeDashoffset={`${2 * Math.PI * 34 * (1 - countdownSeconds / 15)}`}
-                            style={{ transition: 'stroke-dashoffset 0.9s linear, stroke 0.3s ease' }}
-                          />
-                        </svg>
-                        <span
-                          className="absolute inset-0 flex items-center justify-center font-mono font-bold text-lg"
-                          style={{ color: countdownSeconds > 8 ? '#1D9E75' : countdownSeconds > 3 ? '#F59E0B' : '#EF4444' }}
-                        >
-                          {countdownSeconds}
-                        </span>
-                      </div>
-                      <p className="font-mono font-bold tracking-wider text-xs"
-                         style={{ color: countdownSeconds > 8 ? '#1D9E75' : countdownSeconds > 3 ? '#F59E0B' : '#EF4444' }}>
-                        AUTO-DISPATCH IN {countdownSeconds}s
-                      </p>
-                      <div className="flex items-center gap-2 font-bold text-[11px] tracking-wider w-full mt-1">
-                        <button
-                          onClick={() => handleGuardResponse('ACCEPTED')}
-                          className="flex-1 bg-[#1D9E75] hover:bg-[#158a63] text-white font-bold rounded transition-colors cursor-pointer"
-                          style={{ minHeight: '40px' }}
-                        >
-                          ACCEPT
-                        </button>
-                        <button
-                          onClick={() => handleGuardResponse('ESCALATED')}
-                          className="flex-1 bg-[#1a2535] hover:bg-[#243040] text-[#ef9f27] font-bold rounded transition-colors cursor-pointer"
-                          style={{ minHeight: '40px' }}
-                        >
-                          ESCALATE
-                        </button>
-                      </div>
-                    </div>
-                  ) : alertStatus === 'ACCEPTED' ? (
-                    <div className="flex flex-col items-center gap-2 py-1">
-                      <CheckCircle2 className="w-8 h-8 text-[#1D9E75]" />
-                      <p className="font-bold text-sm text-[#1D9E75] tracking-wider">GUARD DISPATCHED</p>
-                      <p className="font-mono text-xs text-gray-400">ETA ~4 MIN</p>
-                    </div>
-                  ) : alertStatus === 'AUTO_DISPATCHED' ? (
-                    <div className="flex flex-col items-center gap-2 py-1">
-                      <ShieldAlert className="w-8 h-8 text-[#EF4444] animate-pulse" />
-                      <p className="font-bold text-xs text-[#EF4444] tracking-wider">AUTO-SOS DISPATCHED</p>
-                      <p className="font-mono text-[10px] text-gray-500 text-center">No operator response. Emergency services contacted.</p>
-                    </div>
-                  ) : (
-                    <div className="flex flex-col items-center gap-2 py-1">
-                      <ShieldAlert className="w-8 h-8 text-[#ef9f27]" />
-                      <p className="font-bold text-xs text-[#ef9f27] tracking-wider">ALERT ESCALATED</p>
-                      <p className="font-mono text-[10px] text-gray-500 text-center">Supervisor notified. Evacuation protocol available.</p>
-                    </div>
-                  )}
+                {/* Mini Map */}
+                <div className="w-36 h-28 bg-black rounded overflow-hidden border border-[#1a2535] shrink-0 pointer-events-none relative">
+                   <MapContainer key={`alertmap-${selectedCam.id}`} center={selectedCam.gps} zoom={15} zoomControl={false} className="w-full h-full">
+                     <TileLayer url="https://{s}.tile.openstreetmap.org/{z}/{x}/{y}.png" />
+                     <CircleMarker center={selectedCam.gps} radius={6} pathOptions={{ color: '#e24b4a', fillColor: '#e24b4a', fillOpacity: 0.8 }} />
+                   </MapContainer>
+                   <div className="absolute top-1/2 left-1/2 -translate-x-1/2 -translate-y-1/2 w-5 h-5 rounded-full border-2 border-[#e24b4a] animate-ping opacity-50" style={{ zIndex: 10 }}></div>
                 </div>
               </motion.div>
             )}
@@ -1119,6 +1054,106 @@ const OperatorConsole = () => {
           threat_id: selectedCam.id,
         } : null}
       />
+
+      {/* FIXED ALERT RESPONSE CARD — outside grid */}
+      <AnimatePresence>
+        {isAlertActive && !isSafe && (
+          <motion.div
+            initial={{ y: 200, opacity: 0 }}
+            animate={{ y: 0, opacity: 1 }}
+            exit={{ y: 200, opacity: 0 }}
+            style={{
+              position: 'fixed',
+              bottom: 24,
+              right: 24,
+              zIndex: 9999,
+              width: 300,
+            }}
+            className="bg-[#0e141e] border border-[#1a2535] rounded-xl overflow-hidden shadow-[0_20px_50px_rgba(0,0,0,0.6)]"
+          >
+            {/* Header */}
+            <div className="bg-[#151920] px-3 py-2 flex items-center justify-between border-b border-[#1a2535]">
+              <div className="flex items-center gap-2">
+                <ShieldAlert className="w-3.5 h-3.5 text-[#e24b4a]" />
+                <span className="text-[10px] font-bold text-white tracking-wide">SAFEZONE AI</span>
+              </div>
+              <span className="text-[9px] text-gray-500 font-mono">
+                {alertStatus === 'PENDING' ? 'AWAITING RESPONSE' : alertStatus.replace('_', ' ')}
+              </span>
+            </div>
+
+            {/* Body */}
+            <div className="p-4">
+              {alertStatus === 'PENDING' && !guardResponded ? (
+                <div className="flex flex-col items-center gap-3">
+                  <div className="relative w-16 h-16">
+                    <svg className="w-16 h-16 -rotate-90" viewBox="0 0 80 80">
+                      <circle cx="40" cy="40" r="34" fill="none" stroke="#1a2535" strokeWidth="4" />
+                      <circle
+                        cx="40" cy="40" r="34" fill="none"
+                        strokeWidth="4"
+                        strokeLinecap="round"
+                        stroke={countdownSeconds > 8 ? '#1D9E75' : countdownSeconds > 3 ? '#F59E0B' : '#EF4444'}
+                        strokeDasharray={`${2 * Math.PI * 34}`}
+                        strokeDashoffset={`${2 * Math.PI * 34 * (1 - countdownSeconds / 15)}`}
+                        style={{ transition: 'stroke-dashoffset 0.9s linear, stroke 0.3s ease' }}
+                      />
+                    </svg>
+                    <span
+                      className="absolute inset-0 flex items-center justify-center font-mono font-bold text-lg"
+                      style={{ color: countdownSeconds > 8 ? '#1D9E75' : countdownSeconds > 3 ? '#F59E0B' : '#EF4444' }}
+                    >
+                      {countdownSeconds}
+                    </span>
+                  </div>
+                  <p className="font-mono font-bold tracking-wider text-xs"
+                     style={{ color: countdownSeconds > 8 ? '#1D9E75' : countdownSeconds > 3 ? '#F59E0B' : '#EF4444' }}>
+                    AUTO-DISPATCH IN {countdownSeconds}s
+                  </p>
+                  <div className="flex flex-col gap-1 w-full text-center">
+                    <h3 className="font-bold text-white" style={{ fontSize: '0.85rem' }}>{selectedCam.label}</h3>
+                    <p className="font-mono text-gray-400" style={{ fontSize: '0.7rem' }}>{selectedCam.zone} • {selectedCam.gps.join(', ')}</p>
+                  </div>
+                  <div className="flex items-center gap-2 font-bold text-[11px] tracking-wider w-full mt-1">
+                    <button
+                      onClick={() => handleGuardResponse('ACCEPTED')}
+                      className="flex-1 bg-[#1D9E75] hover:bg-[#158a63] text-white font-bold rounded transition-colors cursor-pointer"
+                      style={{ minHeight: '40px' }}
+                    >
+                      ACCEPT
+                    </button>
+                    <button
+                      onClick={() => handleGuardResponse('ESCALATED')}
+                      className="flex-1 bg-[#1a2535] hover:bg-[#243040] text-[#ef9f27] font-bold rounded transition-colors cursor-pointer"
+                      style={{ minHeight: '40px' }}
+                    >
+                      ESCALATE
+                    </button>
+                  </div>
+                </div>
+              ) : alertStatus === 'ACCEPTED' ? (
+                <div className="flex flex-col items-center gap-2 py-1">
+                  <CheckCircle2 className="w-8 h-8 text-[#1D9E75]" />
+                  <p className="font-bold text-sm text-[#1D9E75] tracking-wider">GUARD DISPATCHED</p>
+                  <p className="font-mono text-xs text-gray-400">ETA ~4 MIN</p>
+                </div>
+              ) : alertStatus === 'AUTO_DISPATCHED' ? (
+                <div className="flex flex-col items-center gap-2 py-1">
+                  <ShieldAlert className="w-8 h-8 text-[#EF4444] animate-pulse" />
+                  <p className="font-bold text-xs text-[#EF4444] tracking-wider">AUTO-SOS DISPATCHED</p>
+                  <p className="font-mono text-[10px] text-gray-500 text-center">No operator response. Emergency services contacted.</p>
+                </div>
+              ) : (
+                <div className="flex flex-col items-center gap-2 py-1">
+                  <ShieldAlert className="w-8 h-8 text-[#ef9f27]" />
+                  <p className="font-bold text-xs text-[#ef9f27] tracking-wider">ALERT ESCALATED</p>
+                  <p className="font-mono text-[10px] text-gray-500 text-center">Supervisor notified. Evacuation protocol available.</p>
+                </div>
+              )}
+            </div>
+          </motion.div>
+        )}
+      </AnimatePresence>
     </>
   );
 };

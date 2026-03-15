@@ -9,46 +9,64 @@ interface GeminiAnalysisProps {
   isVisible: boolean;
 }
 
-/* ─── Threat-specific fallback text builder ─── */
-const getThreatFallback = (cam: Camera): string => {
+/* ─── Threat-specific fallback: returns { headline, action } ─── */
+const getThreatFallback = (cam: Camera): { headline: string; action: string } => {
   const label = cam.label.toLowerCase();
-  const id = cam.id;
   const conf = cam.conf ?? 91;
 
-  if (/safe zone|safe/.test(label)) {
-    return `Defensive posture geometry absent across all 23 frames. Confidence ${conf}% below dispatch threshold — non-threatening interaction confirmed.`;
-  }
-  if (/molestation alert|molestation|molest|harass/.test(label)) {
-    return `YOLOv8 detected predatory proximity violation at ${id} — aggressor boundary breach across 31 frames at ${conf}% confidence. Dispatch officer immediately and secure evidence buffer.`;
-  }
   if (/physical assault|assault|fight|physical/.test(label)) {
-    return `YOLOv8 detected bilateral aggressive contact at ${id} — arm keypoint centerline crossing across 19 frames at ${conf}% confidence. Dispatch two guards and contact law enforcement now.`;
+    return {
+      headline: `Bilateral assault detected — ${conf}% confidence`,
+      action: 'Dispatch two guards. Contact law enforcement.',
+    };
+  }
+  if (/molestation|molest|harass/.test(label)) {
+    return {
+      headline: `Predatory proximity breach — ${conf}% confidence`,
+      action: 'Dispatch officer. Secure evidence buffer.',
+    };
   }
   if (/fire hazard|fire|smoke/.test(label)) {
-    return `YOLOv8 detected thermal anomaly evacuation pattern at ${id} — synchronized exit vectors across 21 frames at ${conf}% confidence. Trigger fire alarm and dispatch emergency services immediately.`;
-  }
-  if (/trespass|intrusion|breach|perimeter/.test(label)) {
-    return `YOLOv8 detected unauthorized boundary crossing at ${id} — evasive movement pattern across 17 frames at ${conf}% confidence. Dispatch security and lock down access points immediately.`;
+    return {
+      headline: `Thermal anomaly detected — ${conf}% confidence`,
+      action: 'Trigger fire alarm. Evacuate immediately.',
+    };
   }
   if (/evacuation emergency|evacuation|surge|stampede|crowd|panic|flood|warning/.test(label)) {
-    return `YOLOv8 detected crowd crush geometry at ${id} — density threshold breached with panic vectors across 28 frames at ${conf}% confidence. Deploy crowd control and open emergency exits now.`;
+    return {
+      headline: `Crowd crush geometry — ${conf}% confidence`,
+      action: 'Deploy crowd control. Open emergency exits.',
+    };
+  }
+  if (/trespass|intrusion|breach|perimeter/.test(label)) {
+    return {
+      headline: `Unauthorized zone penetration — ${conf}% confidence`,
+      action: 'Dispatch security. Lock down access points.',
+    };
   }
   if (/hit|run|vehicle/.test(label)) {
-    return `YOLOv8 detected vehicle-pedestrian collision at ${id} — pedestrian velocity drop with vehicle intersection across 12 frames at ${conf}% confidence. Contact emergency services and preserve evidence chain.`;
+    return {
+      headline: `Vehicle-pedestrian collision — ${conf}% confidence`,
+      action: 'Contact emergency services immediately.',
+    };
   }
-  if (/collapse|unresponsive|faint/.test(label)) {
-    return `YOLOv8 detected full-body keypoint collapse at ${id} — center-of-gravity vector dropped below ambulatory threshold at ${conf}% confidence. Dispatch medical-equipped guard immediately.`;
+  if (/safe zone|safe/.test(label)) {
+    return {
+      headline: 'Non-threatening — below threshold',
+      action: 'No action required. Monitoring continues.',
+    };
   }
 
-  // Default generic fallback
-  return `YOLOv8 detected anomalous movement at ${id} — confidence ${conf}% exceeds threshold across multiple frames. Dispatch nearest available guard immediately.`;
+  return {
+    headline: `Threat detected — ${conf}% confidence`,
+    action: 'Dispatch nearest guard immediately.',
+  };
 };
 
-const SAFE_FALLBACK =
-  'SafeZone AI analyzed Zone C. High velocity movement detected but defensive posture geometry was absent across all 23 frames. Confidence 42% remains below the 75% dispatch threshold — correctly classified as non-threatening social interaction. No alert generated.';
+const SAFE_FALLBACK = getThreatFallback({ label: 'safe', conf: 42 } as Camera);
 
 const GeminiAnalysis = ({ cam, keypointCount, frameCount, isVisible }: GeminiAnalysisProps) => {
-  const [response, setResponse] = useState<string | null>(null);
+  const [response, setResponse] = useState<{ headline: string; action: string } | null>(null);
   const [loading, setLoading] = useState(false);
   const [responseTime, setResponseTime] = useState<number | null>(null);
   const [showBorder, setShowBorder] = useState(false);
@@ -111,7 +129,12 @@ const GeminiAnalysis = ({ cam, keypointCount, frameCount, isVisible }: GeminiAna
         if (!text || text.trim().length < 10) {
           applyFallback();
         } else {
-          setResponse(text);
+          // Parse Gemini response into headline + action format
+          const sentences = text.trim().split(/[.!]\s+/).filter(Boolean);
+          setResponse({
+            headline: sentences[0]?.slice(0, 60) || getThreatFallback(cam).headline,
+            action: sentences[1]?.slice(0, 60) || getThreatFallback(cam).action,
+          });
           setResponseTime(elapsed);
         }
       } catch (err: unknown) {
@@ -141,6 +164,8 @@ const GeminiAnalysis = ({ cam, keypointCount, frameCount, isVisible }: GeminiAna
   if (!isVisible) return null;
 
   const threatClass = cam.tier === 'SAFE' ? 'NON-THREATENING' : cam.tier;
+  const confValue = cam.conf ?? 0;
+  const isDamage = confValue > 60;
 
   return (
     <motion.div
@@ -187,9 +212,51 @@ const GeminiAnalysis = ({ cam, keypointCount, frameCount, isVisible }: GeminiAna
         )}
 
         {response && (
-          <p className="text-gray-300 text-sm leading-relaxed whitespace-pre-wrap">
-            {response}
-          </p>
+          <div>
+            {/* Confidence Score — big display */}
+            <div className="flex items-center gap-3 mb-4">
+              <span
+                className="font-mono font-black"
+                style={{
+                  fontSize: '2.2rem',
+                  lineHeight: 1,
+                  color: isDamage ? '#e24b4a' : '#1D9E75',
+                }}
+              >
+                {confValue}%
+              </span>
+              {isDamage && (
+                <span className="font-mono text-[10px] tracking-widest font-bold text-[#e24b4a] bg-[#e24b4a]/10 px-2 py-1 rounded border border-[#e24b4a]/30 animate-pulse">
+                  DAMAGE DETECTED
+                </span>
+              )}
+            </div>
+
+            {/* Headline */}
+            <div
+              style={{
+                fontSize: '1.1rem',
+                fontWeight: 800,
+                color: '#ffffff',
+                letterSpacing: '0.02em',
+                lineHeight: 1.3,
+              }}
+            >
+              {response.headline}
+            </div>
+
+            {/* Action */}
+            <div
+              style={{
+                fontSize: '0.9rem',
+                fontWeight: 600,
+                color: '#1D9E75',
+                marginTop: '8px',
+              }}
+            >
+              {response.action}
+            </div>
+          </div>
         )}
 
         {/* Metadata tags */}
