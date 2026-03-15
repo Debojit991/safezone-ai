@@ -17,8 +17,6 @@ cat > README.md << 'EOF'
 **Built at 360 CodeCraft Hackathon · March 2026 · Kolkata, India**
 From idea to working product in **36 hours.**
 
-[🚀 Live Demo](https://safezone-ai.netlify.app) · [📹 Demo Video](#) · [📖 Docs](#documentation)
-
 </div>
 
 ---
@@ -85,7 +83,7 @@ The cameras see everything. They do nothing.
 
 ---
 
-## 🛠️ Tech Stack — The Stack
+## 🛠️ Tech Stack
 
 ### 🔵 Detection Layer
 | Component | Technology | Status |
@@ -145,18 +143,6 @@ The cameras see everything. They do nothing.
    │React App │  │FCM Push  │  │  CENTER  │
    └──────────┘  └──────────┘  └──────────┘
 ```
-
----
-
-## 📸 Screenshots
-
-| Landing Page | Operator Console | Evacuation Center |
-|---|---|---|
-| Problem statement + stats | Live map + AI analysis | Multi-incident command |
-
-| Pipeline View | Tech Stack | Team |
-|---|---|---|
-| 5-step flow + latency | Full component registry | 4 builders, 36 hours |
 
 ---
 
@@ -222,10 +208,9 @@ npm run dev
 
 ### 4. Camera Node Setup
 ```bash
-# On any second device — open browser
-# Navigate to:
+# On any second device — open browser and navigate to:
 http://localhost:5176/camera-node
-# Camera registers automatically to console map
+# Camera registers automatically to the console map
 ```
 
 ---
@@ -276,7 +261,8 @@ POST /api/evidence/lock    — Lock evidence buffer
 | Analog cameras (pre-2010) | ❌ No | No digital relay module |
 | Analog + encoder bridge | ⚠️ Partial | Requires external digitizer hardware |
 
-> SafeZone AI targets India's modern installed CCTV base — IP cameras deployed post-2015 across metro cities, institutions, and public infrastructure. This represents the majority of currently operational cameras in urban India.
+> SafeZone AI targets India's modern installed CCTV base — IP cameras deployed
+> post-2015 across metro cities, institutions, and public infrastructure.
 
 ---
 
