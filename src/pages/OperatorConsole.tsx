@@ -75,7 +75,6 @@ const OperatorConsole = () => {
   const [liveCameraActive, setLiveCameraActive] = useState(false);
   const [fireDetected, setFireDetected] = useState(false);
   const [liveCamOverride, setLiveCamOverride] = useState<Partial<Camera> | null>(null);
-  const liveDetectRef = useRef<ReturnType<typeof setInterval> | null>(null);
   const liveTimerStartedRef = useRef(false);
 
   // ── HELPERS ──
@@ -179,17 +178,21 @@ const OperatorConsole = () => {
 
   // Poll backend to detect if live camera is active
   useEffect(() => {
-    liveDetectRef.current = setInterval(async () => {
+    const id = setInterval(async () => {
       try {
-        const res = await fetch(`${BACKEND_URL}/live-keypoints`, { signal: AbortSignal.timeout(2000) });
+        const res = await fetch(`${BACKEND_URL}/live-keypoints`, {
+          signal: AbortSignal.timeout(2000)
+        });
         if (!res.ok) { setLiveCameraActive(false); return; }
         const data = await res.json();
-        setLiveCameraActive(!!(data.frame_base64 && data.frame_base64.length > 0));
+        console.log('LIVE-KEYPOINTS RESPONSE:', JSON.stringify(data).substring(0, 200));
+        const hasFrame = data && typeof data === 'object' && !data.message && Object.keys(data).length > 2;
+        setLiveCameraActive(hasFrame);
       } catch {
         setLiveCameraActive(false);
       }
-    }, 3000);
-    return () => { if (liveDetectRef.current) clearInterval(liveDetectRef.current); };
+    }, 1500);
+    return () => clearInterval(id);
   }, []);
 
   // ── SKELETON ANIMATION ──
