@@ -118,20 +118,51 @@ async def load_model():
 
 def detect_fire_smoke(frame: np.ndarray) -> dict:
     """
-    Detect fire/smoke by analyzing HSV pixel distribution.
-    Fire pixels: hue 0-30, saturation > 100, value > 150 (orange-red).
-    fire_detected  = fire pixels > 8% of total
-    smoke_detected = fire pixels > 5% of total
+    Detect fire/smoke by analyzing HSV pixel distribution with strict filtering.
+    - Tight HSV thresholds to exclude clothing/skin (hue 5-25, sat>180, val>220)
+    - Exclusion zone: ignore center 60% of frame (person body area)
+    - Only count fire in upper 40% of frame OR outer 20% edges
+    - Average brightness of fire pixels must exceed 220
+    - fire_detected  = fire pixels > 15% of eligible zone
+    - smoke_detected = fire pixels > 10% of eligible zone
     """
+    frame_h, frame_w = frame.shape[:2]
     hsv = cv2.cvtColor(frame, cv2.COLOR_BGR2HSV)
-    h, s, v = hsv[:, :, 0], hsv[:, :, 1], hsv[:, :, 2]
-    fire_mask = (h <= 30) & (s > 100) & (v > 150)
-    total_pixels = frame.shape[0] * frame.shape[1]
+    h_ch, s_ch, v_ch = hsv[:, :, 0], hsv[:, :, 1], hsv[:, :, 2]
+
+    # Tight fire color mask — excludes pure red (clothing) and dark tones (skin)
+    color_mask = (h_ch >= 5) & (h_ch <= 25) & (s_ch > 180) & (v_ch > 220)
+
+    # Exclusion zone mask — only keep pixels in:
+    #   - Upper 40% of frame (y < 0.4 * height) — fire rises above people
+    #   - Outer 20% edges (x < 0.2 * width OR x > 0.8 * width)
+    y_coords = np.arange(frame_h).reshape(-1, 1)
+    x_coords = np.arange(frame_w).reshape(1, -1)
+    upper_zone = y_coords < (0.4 * frame_h)
+    left_edge = x_coords < (0.2 * frame_w)
+    right_edge = x_coords > (0.8 * frame_w)
+    eligible_mask = upper_zone | left_edge | right_edge
+
+    # Combine: fire color in eligible zones only
+    fire_mask = color_mask & eligible_mask
+    eligible_pixel_count = int(np.sum(eligible_mask))
     fire_pixel_count = int(np.sum(fire_mask))
-    fire_ratio = fire_pixel_count / total_pixels if total_pixels > 0 else 0.0
+
+    # Average brightness check — actual flames are extremely bright
+    if fire_pixel_count > 0:
+        avg_brightness = float(np.mean(v_ch[fire_mask]))
+    else:
+        avg_brightness = 0.0
+
+    fire_ratio = fire_pixel_count / eligible_pixel_count if eligible_pixel_count > 0 else 0.0
+
+    # Fire requires bright pixels (avg > 220) AND sufficient coverage
+    is_fire = fire_ratio > 0.15 and avg_brightness > 220
+    is_smoke = fire_ratio > 0.10 and avg_brightness > 220
+
     return {
-        "fire_detected": fire_ratio > 0.08,
-        "smoke_detected": fire_ratio > 0.05,
+        "fire_detected": is_fire,
+        "smoke_detected": is_smoke,
         "fire_pixel_ratio": round(fire_ratio, 4),
     }
 
